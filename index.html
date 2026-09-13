@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title id="appTitle">Loan Management</title>
+  <link id="appFavicon" rel="icon" type="image/png" href="loan-management-logo.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <div class="brand-mark" aria-hidden="true"><img id="loginLogo" src="loan-management-logo.png" alt="Application logo"></div>
+      <h1 id="loginAppName">Loan Management</h1>
+      <div id="loginStatus" class="login-status" role="status" aria-live="polite"></div>
+      <form id="loginForm" novalidate>
+        <label for="loginUser">Username</label>
+        <input id="loginUser" required autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Enter username" />
+
+        <label for="loginPass">Password</label>
+        <div class="password-wrap">
+          <input id="loginPass" required type="password" autocomplete="current-password" placeholder="Enter password" />
+          <button type="button" class="icon-btn" id="passwordToggle" onclick="togglePassword()" aria-label="Show password" title="Show password">👁</button>
+        </div>
+        <div id="capsWarning" class="caps-warning hidden">⚠ Caps Lock is on</div>
+
+        <div class="login-options">
+          <label class="check-row"><input type="checkbox" id="rememberLogin" /> <span>Remember me</span></label>
+          <button type="button" class="link-btn" onclick="showForgotPassword()">Forgot password?</button>
+        </div>
+
+        <button class="primary-btn full" id="loginBtn" type="submit">Sign in</button>
+        <div class="login-register-row"><span>New user?</span> <button type="button" class="link-btn" onclick="showRegisterUser()">Register user</button></div>
+      </form>
+      <div class="login-security">🔒 Secure server session · Your data is stored on the application server</div>
+      
+    </div>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <div class="brand-logo"><img id="sidebarLogo" src="loan-management-logo.png" alt="Application logo"></div>
+        <div class="brand-copy"><strong id="sidebarAppName">Loan Management</strong></div>
+        <button id="sidebarCollapseBtn" class="sidebar-collapse" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
+      </div>
+      <nav>
+        <div class="nav-section" data-section="overview">
+          <button class="nav-section-title" type="button" aria-expanded="true"><span>Overview</span><b>⌃</b></button>
+          <div class="nav-section-items">
+            <button class="nav-item active" data-page="dashboard" title="Dashboard">▦ <span>Dashboard</span></button>
+          </div>
+        </div>
+
+        <div class="nav-section" data-section="customersLoans">
+          <button class="nav-section-title" type="button" aria-expanded="true"><span>Customers &amp; Loans</span><b>⌃</b></button>
+          <div class="nav-section-items">
+            <button class="nav-item" data-page="customers" title="Customers">👥 <span>Customers</span></button>
+            <button class="nav-item" data-page="registration" title="New Registration">➕ <span>New Registration</span></button>
+            <button class="nav-item" data-page="loans" title="Loans">💰 <span>Loans</span></button>
+            <button class="nav-item" data-page="schedule" title="Repayment Schedule">📋 <span>Repayment Schedule</span></button>
+          </div>
+        </div>
+
+        <div class="nav-section" data-section="collections">
+          <button class="nav-section-title" type="button" aria-expanded="true"><span>Collections</span><b>⌃</b></button>
+          <div class="nav-section-items">
+            <button class="nav-item" data-page="today" title="Today's Collection">📅 <span>Today's Collection</span></button>
+            <button class="nav-item" data-page="pending" title="Pending Payments">⏰ <span>Pending Payments</span></button>
+            <button class="nav-item" data-page="payment" title="Payment Entry">💳 <span>Payment Entry</span></button>
+            <button class="nav-item" data-page="history" title="Payment History">🧾 <span>Payment History</span></button>
+          </div>
+        </div>
+
+        <div class="nav-section" data-section="reportsRisk">
+          <button class="nav-section-title" type="button" aria-expanded="true"><span>Reports &amp; Risk</span><b>⌃</b></button>
+          <div class="nav-section-items">
+            <button class="nav-item" data-page="reports" title="Monthly Report">📊 <span>Monthly Report</span></button>
+            <button class="nav-item" data-page="analytics" title="Graphs &amp; Analytics">📈 <span>Graphs &amp; Analytics</span></button>
+            <button class="nav-item" data-page="blacklist" title="Blacklisted Customers">🚫 <span>Blacklisted Customers</span></button>
+            <button class="nav-item" data-page="expiredPeople" title="Expired People">⚫ <span>Expired People</span></button>
+          </div>
+        </div>
+
+        <div class="nav-section" data-section="administration">
+          <button class="nav-section-title" type="button" aria-expanded="true"><span>Administration</span><b>⌃</b></button>
+          <div class="nav-section-items">
+            <button class="nav-item" data-page="backup" title="Backup / Export">💾 <span>Backup / Export</span></button>
+            <button class="nav-item" data-page="settings" title="Settings">⚙️ <span>Settings</span></button>
+          </div>
+        </div>
+      </nav>
+      <button id="logoutBtn" class="logout">↪ Logout</button>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button id="menuBtn" class="menu-btn">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input id="globalSearch" placeholder="Search customer, mobile, loan ID..." />
+        </div>
+        <button class="notification-btn" onclick="openPage('pending')">🔔 <b id="notifCount">0</b></button>
+        <div class="user-chip"><span class="avatar">A</span><div><b>User</b><small></small></div></div>
+      </header>
+      <main id="content" class="content"></main>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot"></div>
+
+  <script src="js/core.js"></script>
+  <script src="js/navigation.js"></script>
+  <script src="js/dashboard.js"></script>
+  <script src="js/customers.js"></script>
+  <script src="js/loans.js"></script>
+  <script src="js/collections.js"></script>
+  <script src="js/payments.js"></script>
+  <script src="js/reports.js"></script>
+  <script src="js/admin.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
