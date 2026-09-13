@@ -19,12 +19,16 @@
 - Historical version folders and README files
 
 ## Run
-1. Install Node.js 22.5+.
-2. Run `npm install`.
-3. Run `npm start` or double-click `start-server.bat`.
-4. Open `http://localhost:8080`.
+This repository contains the browser frontend. The backend is a separate Node.js service.
 
-Business data is stored server-side in SQLite under `data/`. Authentication data remains server-side and is not exposed in the business-data backup.
+### Local development
+1. Run the backend on `http://localhost:8080`.
+2. Serve this frontend folder with VS Code Live Server (or another static HTTP server).
+3. Open the generated local frontend URL.
+4. When the frontend is served from `localhost`/`127.0.0.1`, API requests use the local backend automatically.
+
+### Production
+The deployed frontend automatically uses the live backend at `https://kissan-king-assistance-backend.onrender.com`. Business data and authentication are stored by the backend in PostgreSQL.
 
 ## v1.3.2 Dashboard & Analytics update
 - Dashboard: Collection Trend and Overdue Risk moved to the final/bottom dashboard row.

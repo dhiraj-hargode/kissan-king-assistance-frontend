@@ -2,7 +2,12 @@
 
 // v47: server-backed data layer. Today's Collection matches payments by loan + collection date so fully paid entries are correctly locked. Business data is no longer persisted in localStorage.
 // The browser keeps only an in-memory working copy for rendering; the server/database is authoritative.
-const API_BASE = "";
+// API endpoint selection:
+// - Local development keeps using the local backend.
+// - Deployed frontend uses the live Render backend.
+
+const API_BASE = "https://kissan-king-assistance-backend.onrender.com";
+
 const KEY = "server-db";
 const USER_DB_KEY = "server-db";
 const REMEMBER_KEY = "kk_remember_login"; // preference only; authentication is server-side.
@@ -89,7 +94,7 @@ function migratePendingQueue(){
   if(db.settings && Object.prototype.hasOwnProperty.call(db.settings,'pendingQueue')) delete db.settings.pendingQueue;
 }
 function getCurrentUser(){return currentUser;}
-async function apiJSON(url,options={}){const r=await fetch(API_BASE+url,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})},...options});let body={};try{body=await r.json()}catch{}if(!r.ok)throw new Error(body.error||`Request failed (${r.status})`);return body;}
+async function apiJSON(url,options={}){const r=await fetch(API_BASE+url,{credentials:'include',headers:{'Content-Type':'application/json',...(options.headers||{})},...options});let body={};try{body=await r.json()}catch{}if(!r.ok)throw new Error(body.error||`Request failed (${r.status})`);return body;}
 async function loadServerData(){const x=await apiJSON('/api/db');currentUser=x.user;db=x.data||blankDB();db.expiredCustomers=Array.isArray(db.expiredCustomers)?db.expiredCustomers:[];migratePendingQueue();applyAppBranding();updateCurrentUserChip();return db;}
 async function loadPublicBranding(){try{const x=await apiJSON('/api/public/branding');const g=x.branding||{};db.settings={...(db.settings||blankDB().settings),appName:g.appName||db.settings?.appName||'Loan Management',logoData:g.logoData||db.settings?.logoData||'',logoEnabled:g.logoEnabled!==false};applyAppBranding();}catch(e){applyAppBranding();}}
 let saveQueue=Promise.resolve();
