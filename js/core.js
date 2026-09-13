@@ -6,7 +6,7 @@
 // - Local development keeps using the local backend.
 // - Deployed frontend uses the live Render backend.
 
-const API_BASE = "https://kissan-king-assistance-backend.onrender.com";
+const API_BASE = "";
 
 const KEY = "server-db";
 const USER_DB_KEY = "server-db";
