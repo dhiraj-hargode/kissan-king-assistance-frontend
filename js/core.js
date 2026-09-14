@@ -400,6 +400,45 @@ function generateSchedule(loan){
   }
   db.schedules.push(...rows);
 }
+function ensureConfiguredLoanSchedule(loan){
+  if(!loan || String(loan.emiOption||'YES').toUpperCase()!=='YES') return false;
+  const n=Number(loan.duration);
+  if(!Number.isInteger(n)||n<1||!validISODate(loan.startDate)) return false;
+
+  const existing=scheduleFor(loan.id).filter(s=>Number(s.installment||0)>=1 && Number(s.installment||0)<=n);
+  const existingByInstallment=new Map(existing.map(s=>[Number(s.installment),s]));
+  if(existingByInstallment.size>=n) return false;
+
+  // This application uses equal monthly principal with interest calculated on
+  // the opening outstanding principal. The configured interest rate is MONTHLY.
+  // Preserve all existing/paid rows and only create missing duration rows.
+  const paidPrincipalTotal=Math.max(0,paidPrincipal(loan.id));
+  const monthlyPrincipal=Number((Number(loan.amount||0)/n).toFixed(2));
+  const rate=Math.max(0,Number(loan.interestRate||0))/100;
+  const method=String(loan.method||'Reducing Balance');
+  const added=[];
+
+  for(let i=1;i<=n;i++){
+    if(existingByInstallment.has(i)) continue;
+    const priorPrincipal=Math.min(Number(loan.amount||0), Math.max(0, paidPrincipalTotal + monthlyPrincipal*(i-1)));
+    const openingOutstanding=Math.max(0,Number(loan.amount||0)-priorPrincipal);
+    const principal=i===n ? openingOutstanding : Math.min(monthlyPrincipal,openingOutstanding);
+    let interest=0;
+    if(method==='Flat Monthly') interest=Number((Number(loan.amount||0)*rate).toFixed(2));
+    else interest=Number((openingOutstanding*rate).toFixed(2));
+    const emi=Number((principal+interest).toFixed(2));
+    if(principal<=0.005 && interest<=0.005) continue;
+    const dueDate=monthlyDueDate(loan.startDate,i-1);
+    added.push({
+      id:uid('SCH'),loanId:loan.id,customerId:loan.customerId,installment:i,
+      dueDate,principal,interest,emi,paid:0,penalty:0,status:statusForSchedule({dueDate,paid:0,emi}),
+      ownerId:getCurrentUser()?.id||'ADMIN'
+    });
+  }
+  if(added.length){db.schedules.push(...added);return true;}
+  return false;
+}
+
 function recalculateFutureInterest(loanId){
   const l=db.loans.find(x=>String(x.id)===String(loanId));
   if(!l)return;

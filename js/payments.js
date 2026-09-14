@@ -356,9 +356,17 @@ function repaymentScheduleDisplayRows(loan){
   }
   return rows;
 }
-function renderSelectedSchedule(loan){
+async function renderSelectedSchedule(loan){
   const area=document.getElementById('scheduleArea');
   if(!area||!loan)return;
+  // A loan must have exactly its configured duration of installments. Older
+  // QA/import data may contain only the installments that had already reached
+  // today. Complete the missing future rows using the loan's monthly interest
+  // and persist them through the normal mutation API.
+  const added=ensureConfiguredLoanSchedule(loan);
+  if(added){
+    try{ await save(); }catch(e){ console.error('Could not persist completed schedule',e); }
+  }
   const cu=db.customers.find(x=>String(x.id)===String(loan.customerId));
   const rows=repaymentScheduleDisplayRows(loan);
   if(!rows.length){
@@ -387,13 +395,13 @@ async function searchSchedule(q){
   const exact=activeLoans().find(l=>String(l.id).toLowerCase()===q);
   if(exact){
     selectedLoanId=exact.id;
-    renderSelectedSchedule(exact);
+    await renderSelectedSchedule(exact);
     return;
   }
 
   if(ls.length===1 && q){
     selectedLoanId=ls[0].id;
-    renderSelectedSchedule(ls[0]);
+    await renderSelectedSchedule(ls[0]);
     return;
   }
 
