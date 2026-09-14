@@ -160,7 +160,7 @@ function openEditLoan(id){
   f.querySelector('[name="emiOption"]').addEventListener("change",toggleEditDuration);
   toggleEditDuration();
 }
-function saveEditedLoan(id){
+async function saveEditedLoan(id){
   const l=db.loans.find(x=>String(x.id)===String(id)); const f=document.getElementById("editLoanForm"); if(!l||!f)return;
   const o=Object.fromEntries(new FormData(f).entries());
   if(String(o.emiOption||"").toUpperCase()==="NO" && !o.duration) o.duration=String(l.duration||10);
@@ -175,15 +175,14 @@ function saveEditedLoan(id){
   const before={...l};
   l.khataNo=cleanText(o.khataNo,50);l.startDate=o.startDate;l.loanType=cleanText(o.loanType,100);l.loanAgainst=cleanText(o.loanAgainst,100);l.amount=Number(o.amount);l.interestRate=Number(o.interestRate);l.emiOption=String(o.emiOption).toUpperCase();l.duration=Number(o.duration);l.dueDay=loanDueDay(l);l.method=cleanText(o.method,50);l.penalty=Number(o.penalty||0);l.status=String(o.loanStatus||"ACTIVE").toUpperCase();l.notes=cleanText(o.notes,1000);l.updatedAt=new Date().toISOString();
   db.deletedRecords=db.deletedRecords||[];
-  db.deletedRecords.push({id:uid("AUD"),type:"loan-edit",recordId:l.id,deletedAt:new Date().toISOString(),deletedBy:"admin",reason:"Loan details updated",data:{before}});
+  db.deletedRecords.push({id:uid("AUD"),recordType:"loan-edit",recordId:l.id,deletedAt:new Date().toISOString(),deletedBy:"admin",reason:"Loan details updated",data:{before}});
   if(loanPayments(l.id).length===0){db.schedules=db.schedules.filter(s=>String(s.loanId)!==String(l.id));generateSchedule(l);}else{
     // Preserve all paid history. Only refresh unpaid schedules so the new rate,
     // penalty and remaining balance are reflected without rewriting transactions.
-    const unpaid=scheduleFor(l.id).filter(s=>s.status!=="PAID");
-    const outstanding=loanOutstanding(l); const principalPer=l.emiOption==="YES"?Number((l.amount/Math.max(1,l.duration)).toFixed(2)):0;
-    unpaid.forEach(s=>{s.interest=Number((outstanding*Number(l.interestRate||0)/100).toFixed(2));if(l.emiOption==="YES")s.principal=Math.min(Number(s.principal||principalPer)||principalPer,outstanding);else s.principal=0;s.emi=Number((s.principal+s.interest).toFixed(2));s.penalty=Number(l.penalty||0);s.status=statusForSchedule(s)});
+    recalculateFutureInterest(l.id);
   }
-  if(l.status==="CLOSED" && loanOutstanding(l)>0){l.status="ACTIVE";toast("Loan has outstanding balance, so it remains ACTIVE.","err");}else{save();toast("Loan details updated successfully");closeModal();openPage("loans");}
+  if(l.status==="CLOSED" && loanOutstanding(l)>0){l.status="ACTIVE";toast("Loan has outstanding balance, so it remains ACTIVE.","err");return;}
+  try{await save();toast("Loan details updated successfully");closeModal();await openPage("loans");}catch(e){toast(e.message||"Could not save loan changes","err");}
 }
 
 

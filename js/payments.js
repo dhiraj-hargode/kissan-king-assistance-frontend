@@ -36,11 +36,8 @@ async function openPaymentFor(loanId,scheduleId=null){
   // Default the payment to the selected installment, not to the loan-level
   // balance. Legacy/interest-only installments can legitimately have ₹0
   // principal outstanding while still having an unpaid interest amount.
-  const schedulePaid=effectiveSchedulePaid(s);
-  const unpaidPrincipal=Math.max(0,Number(s.principal||0)-Math.min(Number(s.principal||0),Math.max(0,schedulePaid)));
-  const principalDue=Math.min(unpaidPrincipal,Math.max(0,loanOutstanding(l)));
-  const interestPaid=db.payments.filter(p=>String(p.scheduleId||'')===String(s.id)).reduce((a,p)=>a+Number(p.interest||0),0);
-  const interestDue=Math.max(0,Number(s.interest||0)-interestPaid);
+  const principalDue=Math.min(schedulePrincipalDue(s),Math.max(0,loanOutstanding(l)));
+  const interestDue=scheduleInterestDue(s);
   // Keep Principal and Interest empty when opening a payment.
   // The user must explicitly enter the amount to collect instead of
   // accidentally saving the full installment defaults.
@@ -56,13 +53,8 @@ function calculatePaymentAmounts(loanId,scheduleId){
   const s=db.schedules.find(x=>String(x.id)===String(scheduleId));
   if(!l||!s){toast("Unable to calculate payment amounts.","err");return;}
 
-  const schedulePaid=effectiveSchedulePaid(s);
-  const unpaidPrincipal=Math.max(0,Number(s.principal||0)-Math.min(Number(s.principal||0),Math.max(0,schedulePaid)));
-  const principalDue=Math.min(unpaidPrincipal,Math.max(0,loanOutstanding(l)));
-  const interestPaid=db.payments
-    .filter(p=>String(p.scheduleId||"")===String(s.id))
-    .reduce((a,p)=>a+Number(p.interest||0),0);
-  const interestDue=Math.max(0,Number(s.interest||0)-interestPaid);
+  const principalDue=Math.min(schedulePrincipalDue(s),Math.max(0,loanOutstanding(l)));
+  const interestDue=scheduleInterestDue(s);
 
   form.principal.value=principalDue>0.005?principalDue:"";
   form.interest.value=interestDue>0.005?interestDue:"";
@@ -72,7 +64,7 @@ function calculatePaymentAmounts(loanId,scheduleId){
 }
 
 async function savePayment(loanId,scheduleId){
-  await ensureServerDataLoaded();
+  await loadServerData();
   const form=document.getElementById("payForm"); if(!form)return;
   const f=new FormData(form),o=Object.fromEntries(f.entries());
   const l=db.loans.find(x=>String(x.id)===String(loanId));
@@ -241,11 +233,21 @@ function clearPaymentHistoryFilters(){
   paymentHistoryFilterChanged();
 }
 async function printPaymentHistory(){
-  await ensureServerDataLoaded();
-  const rows=paymentHistoryRows();
-  const body=`<h2>Payment History</h2><p>Generated: ${fmtDate(todayISO())}</p><table><thead><tr><th>Payment ID</th><th>Date</th><th>Customer</th><th>Loan / Khata</th><th>Principal</th><th>Interest</th><th>Penalty</th><th>Total</th><th>Mode</th></tr></thead><tbody>${rows.map(p=>{const l=db.loans.find(x=>String(x.id)===String(p.loanId)),cu=l&&db.customers.find(x=>String(x.id)===String(l.customerId));return `<tr><td>${esc(p.id)}</td><td>${fmtDate(p.date)}</td><td>${esc(customerName(cu||{}))}</td><td>${esc(l?.id||"")}</td><td>${money(p.principal)}</td><td>${money(p.interest)}</td><td>${money(p.penalty)}</td><td>${money(p.total)}</td><td>${esc(p.mode||"")}</td></tr>`}).join("")}</tbody></table>`;
-  printSection("Loan Management — Payment History",body);
+  try{
+    const params=new URLSearchParams({page:'1',limit:'100',search:paymentHistoryState.search||'',from:paymentHistoryState.from||'',to:paymentHistoryState.to||'',mode:paymentHistoryState.mode||'',customerId:paymentHistoryState.customerId||'',loanId:paymentHistoryState.loanId||''});
+    const first=await apiJSON(`/api/payments?${params.toString()}`);
+    let rows=Array.isArray(first.payments)?first.payments.slice():[];
+    const totalPages=Number(first.pagination?.totalPages||1);
+    for(let page=2;page<=totalPages;page++){
+      params.set('page',String(page));
+      const x=await apiJSON(`/api/payments?${params.toString()}`);
+      if(Array.isArray(x.payments)) rows.push(...x.payments);
+    }
+    const body=`<h2>Payment History</h2><p>Generated: ${fmtDate(todayISO())}</p><table><thead><tr><th>Payment ID</th><th>Date</th><th>Customer</th><th>Loan / Khata</th><th>Principal</th><th>Interest</th><th>Penalty</th><th>Total</th><th>Mode</th></tr></thead><tbody>${rows.map(p=>{const l=p.loan||{},cu=p.customer||{};return `<tr><td>${esc(p.id)}</td><td>${fmtDate(p.date)}</td><td>${esc(customerName(cu)||cu.name||'-')}</td><td>${esc(l.legacyKhataNo||l.khataNo||l.id||'')}</td><td>${money(p.principal)}</td><td>${money(p.interest)}</td><td>${money(p.penalty)}</td><td>${money(p.total)}</td><td>${esc(p.mode||'')}</td></tr>`}).join('')}</tbody></table>`;
+    printSection('Loan Management — Payment History',body);
+  }catch(e){toast(e.message||'Could not print Payment History','err');}
 }
+
 function paymentHistoryRows(){
   const q=(document.getElementById("historySearch")?.value||"").trim().toLowerCase();
   const from=document.getElementById("historyFrom")?.value||"",to=document.getElementById("historyTo")?.value||"",mode=document.getElementById("historyMode")?.value||"";
@@ -407,7 +409,8 @@ async function searchSchedule(q){
   }
 }
 
-function editPayment(id){
+async function editPayment(id){
+  try{await loadServerData();}catch(e){toast(e.message||"Could not load the latest payment data.","err");return;}
   const p=db.payments.find(x=>String(x.id)===String(id));
   if(!p){toast("Payment not found.","err");return;}
   const l=db.loans.find(x=>String(x.id)===String(p.loanId));
@@ -415,7 +418,7 @@ function editPayment(id){
   openModal("Edit Payment",`<div class="notice">Editing a payment will recalculate the loan balance and schedule. The original values are preserved in the audit trail.</div><form id="editPayForm"><div class="form-grid">${fg("Payment Date","date","date",true)}${fg("Principal","principal","number",true)}${fg("Interest","interest","number",true)}${fg("Penalty","penalty","number")}${fg("Payment Mode","mode","text",true)}${fg("Notes","notes")}</div></form>`,`<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveEditedPayment('${esc(p.id)}')">Save Changes</button>`);
   const f=document.getElementById("editPayForm");f.date.value=p.date;f.principal.value=p.principal;f.interest.value=p.interest;f.penalty.value=p.penalty;f.mode.value=p.mode||"Cash";f.notes.value=p.notes||"";
 }
-function saveEditedPayment(id){
+async function saveEditedPayment(id){
   const p=db.payments.find(x=>String(x.id)===String(id));
   if(!p){toast("Payment not found.","err");return;}
   const l=db.loans.find(x=>String(x.id)===String(p.loanId));
@@ -426,21 +429,27 @@ function saveEditedPayment(id){
   const principal=Number(o.principal||0),interest=Number(o.interest||0),penalty=Number(o.penalty||0),total=principal+interest+penalty;
   const errors=[];
   if(!validISODate(o.date)) errors.push("Enter a valid payment date.");
+  if(validISODate(o.date)&&o.date>todayISO()) errors.push("Payment date cannot be in the future.");
   if(o.date<l.startDate) errors.push("Payment date cannot be before the loan start date.");
   if(principal<0||interest<0||penalty<0) errors.push("Payment amounts cannot be negative.");
   if(principal>currentOutstanding+0.005) errors.push("Principal payment cannot exceed the available loan balance.");
+  if(s && total>effectiveDueAmount(s)+Number(p.total||0)+0.005) errors.push(`Payment exceeds the available installment amount (${money(effectiveDueAmount(s)+Number(p.total||0))}).`);
   if(total<=0) errors.push("Payment amount must be greater than zero.");
   if(!cleanText(o.mode,50)) errors.push("Payment mode is required.");
   if(errors.length){toast(errors[0],"err");return;}
   // Preserve the previous values for audit.
   db.deletedRecords=db.deletedRecords||[];
-  db.deletedRecords.push({id:uid("AUD"),type:"payment-edit",recordId:p.id,deletedAt:new Date().toISOString(),deletedBy:"admin",reason:"Payment updated",data:{before:{...p}}});
+  db.deletedRecords.push({id:uid("AUD"),recordType:"payment-edit",recordId:p.id,deletedAt:new Date().toISOString(),deletedBy:"admin",reason:"Payment updated",data:{before:{...p}}});
   const oldPrincipal=Number(p.principal||0),oldInterest=Number(p.interest||0);
   p.date=o.date;p.principal=principal;p.interest=interest;p.penalty=penalty;p.total=total;p.mode=cleanText(o.mode,50);p.notes=cleanText(o.notes,1000);p.updatedAt=new Date().toISOString();
-  if(s){s.paid=Math.max(0,Number(s.paid||0)-oldPrincipal-oldInterest+principal+interest);s.status=statusForSchedule(s);}
-  save();
-  if(typeof paymentHistoryCache!=='undefined') paymentHistoryCache.clear();
-  toast("Payment updated successfully");closeModal();renderPage("history");
+  if(s){s.paid=Math.max(0,Number(s.paid||0)-oldPrincipal-oldInterest+principal+interest);s.status=effectiveDueAmount(s)<=0.005?"PAID":statusForSchedule(s);}
+  recalculateFutureInterest(l.id);
+  try{await save();
+    if(typeof paymentHistoryCache!=='undefined') paymentHistoryCache.clear();
+    if(typeof pendingCollectionState!=='undefined'){pendingCollectionState.cache.clear();pendingCollectionState.requestKey="";pendingCollectionState.request=null;}
+    if(typeof todayCollectionState!=='undefined'){todayCollectionState.cache.clear();todayCollectionState.requestKey="";todayCollectionState.request=null;}
+    toast("Payment updated successfully");closeModal();await openPage("history");
+  }catch(e){toast(e.message||"Could not save payment changes","err");}
 }
 
 function paymentHistoryRemainingMap(){

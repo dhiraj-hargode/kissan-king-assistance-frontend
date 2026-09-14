@@ -73,8 +73,8 @@ function syncDistrictPincode(form){
 }
 function validateCustomerInput(o,editingId=null){const errors=[];if(!cleanText(o.firstName,100))errors.push("First name is required.");if(!validMobile(o.mobile,true))errors.push("Enter a valid 10-digit Indian mobile number.");if(!cleanText(o.city||o.village,100))errors.push("City is required.");if(!cleanText(o.district,100))errors.push("District is required.");if(o.homeNumber&&!validMobile(o.homeNumber,false))errors.push("Enter a valid alternate mobile number.");if(o.guarantorMobile&&!validMobile(o.guarantorMobile,false))errors.push("Enter a valid guarantor mobile number.");if(o.pincode&&!/^\d{6}$/.test(String(o.pincode).trim()))errors.push("Pincode must be 6 digits.");const mobile=String(o.mobile||"").trim();if(db.customers.some(c=>String(c.id)!==String(editingId||"")&&String(c.mobile||"").trim()===mobile))errors.push("Another customer already uses this mobile number.");return errors;}
 function validateLoanInput(o,customerId){const errors=[],amount=Number(o.amount),rate=Number(o.interestRate),duration=Number(o.duration),dueDay=Number(o.dueDay),penalty=Number(o.penalty||0);if(!customerId||!db.customers.some(c=>String(c.id)===String(customerId)))errors.push("Valid customer selection is required.");if(!cleanText(o.khataNo,50))errors.push("Khata No is required.");if(!cleanText(o.loanType,100))errors.push("Loan Type is required.");if(!cleanText(o.loanAgainst,100))errors.push("Loan Against is required.");if(!["YES","NO"].includes(String(o.emiOption||"").toUpperCase()))errors.push("Select EMI Option YES or NO.");if(!positiveNumber(amount))errors.push("Loan amount must be greater than zero.");if(!Number.isFinite(rate)||rate<0||rate>100)errors.push("Monthly interest must be between 0 and 100%.");if(String(o.emiOption||"").toUpperCase()==="YES" && (!Number.isInteger(duration)||duration<1||duration>240))errors.push("Duration must be a whole number between 1 and 240 months for EMI loans.");if(!Number.isInteger(dueDay)||dueDay<1||dueDay>31)errors.push("Due day must be between 1 and 31.");if(!validISODate(o.startDate))errors.push("Enter a valid loan apply date.");if(!["Flat Monthly","Reducing Balance"].includes(String(o.method||"")))errors.push("Select a valid interest method.");if(!nonNegativeNumber(penalty))errors.push("Penalty cannot be negative.");const duplicate=db.loans.some(l=>String(l.id)!==String(o.loanId||"")&&String(l.khataNo||l.legacyKhataNo||"").trim().toLowerCase()===String(o.khataNo||"").trim().toLowerCase());if(duplicate)errors.push("This Khata No is already assigned to another loan.");return errors;}
-function validatePaymentInput(o,loan,schedule){const errors=[],principal=Number(o.principal||0),interest=Number(o.interest||0),penalty=Number(o.penalty||0),total=principal+interest+penalty;if(!loan)errors.push("Loan not found.");if(!schedule)errors.push("Installment not found.");if(loan&&schedule&&String(schedule.loanId)!==String(loan.id))errors.push("Selected installment does not belong to this loan.");if(!validISODate(o.date))errors.push("Enter a valid payment date.");if(loan&&validISODate(o.date)&&validISODate(loan.startDate)&&o.date<loan.startDate)errors.push("Payment date cannot be before the loan start date.");if(!Number.isFinite(principal)||principal<0)errors.push("Principal cannot be negative.");if(!Number.isFinite(interest)||interest<0)errors.push("Interest cannot be negative.");if(!Number.isFinite(penalty)||penalty<0)errors.push("Penalty cannot be negative.");if(principal>0&&loan&&principal>loanOutstanding(loan)+0.005)errors.push("Principal payment cannot exceed the remaining loan balance.");if(total<=0)errors.push("Payment amount must be greater than zero.");if(!cleanText(o.mode,50))errors.push("Payment mode is required.");return errors;}
-function validateDatabaseIntegrity(){const issues=[],ids=new Set();if(!db||!Array.isArray(db.customers)||!Array.isArray(db.loans)||!Array.isArray(db.schedules)||!Array.isArray(db.payments)||!Array.isArray(db.blacklist))return ["Database structure is invalid."];db.customers.forEach(c=>{if(ids.has(String(c.id)))issues.push(`Duplicate customer ID: ${c.id}`);ids.add(String(c.id));if(!String(c.firstName||"").trim())issues.push(`Customer ${c.id} has no first name.`);});const customerIds=new Set(db.customers.map(c=>String(c.id))),loanIds=new Set();db.loans.forEach(l=>{if(loanIds.has(String(l.id)))issues.push(`Duplicate loan ID: ${l.id}`);loanIds.add(String(l.id));if(!customerIds.has(String(l.customerId)))issues.push(`Loan ${l.id} references missing customer ${l.customerId}.`);if(!positiveNumber(l.amount))issues.push(`Loan ${l.id} has invalid amount.`);});db.schedules.forEach(s=>{if(!loanIds.has(String(s.loanId)))issues.push(`Schedule ${s.id} references missing loan ${s.loanId}.`);if(!validISODate(s.dueDate))issues.push(`Schedule ${s.id} has invalid due date.`);});db.expiredCustomers.forEach(x=>{if(!customerIds.has(String(x.customerId)))issues.push(`Expired record ${x.id} references missing customer ${x.customerId}.`);});db.payments.forEach(p=>{if(!loanIds.has(String(p.loanId)))issues.push(`Payment ${p.id} references missing loan ${p.loanId}.`);if(!validISODate(p.date))issues.push(`Payment ${p.id} has invalid date.`);const total=Number(p.principal||0)+Number(p.interest||0)+Number(p.penalty||0);if(Math.abs(total-Number(p.total||0))>0.01)issues.push(`Payment ${p.id} total does not match its components.`);});return issues;}
+function validatePaymentInput(o,loan,schedule){const errors=[],principal=Number(o.principal||0),interest=Number(o.interest||0),penalty=Number(o.penalty||0),total=principal+interest+penalty;if(!loan)errors.push("Loan not found.");if(!schedule)errors.push("Installment not found.");if(loan&&schedule&&String(schedule.loanId)!==String(loan.id))errors.push("Selected installment does not belong to this loan.");if(!validISODate(o.date))errors.push("Enter a valid payment date.");if(loan&&validISODate(o.date)&&validISODate(loan.startDate)&&o.date<loan.startDate)errors.push("Payment date cannot be before the loan start date.");if(validISODate(o.date)&&o.date>todayISO())errors.push("Payment date cannot be in the future.");if(!Number.isFinite(principal)||principal<0)errors.push("Principal cannot be negative.");if(!Number.isFinite(interest)||interest<0)errors.push("Interest cannot be negative.");if(!Number.isFinite(penalty)||penalty<0)errors.push("Penalty cannot be negative.");if(principal>0&&loan&&principal>loanOutstanding(loan)+0.005)errors.push("Principal payment cannot exceed the remaining loan balance.");if(schedule&&total>effectiveDueAmount(schedule)+0.005)errors.push(`Payment exceeds the current installment due (${money(effectiveDueAmount(schedule))}).`);if(total<=0)errors.push("Payment amount must be greater than zero.");if(!cleanText(o.mode,50))errors.push("Payment mode is required.");return errors;}
+function validateDatabaseIntegrity(){const issues=[],ids=new Set();if(!db||!Array.isArray(db.customers)||!Array.isArray(db.loans)||!Array.isArray(db.schedules)||!Array.isArray(db.payments)||!Array.isArray(db.blacklist))return ["Database structure is invalid."];db.customers.forEach(c=>{if(ids.has(String(c.id)))issues.push(`Duplicate customer ID: ${c.id}`);ids.add(String(c.id));if(!String(c.firstName||"").trim())issues.push(`Customer ${c.id} has no first name.`);});const customerIds=new Set(db.customers.map(c=>String(c.id))),loanIds=new Set();db.loans.forEach(l=>{if(loanIds.has(String(l.id)))issues.push(`Duplicate loan ID: ${l.id}`);loanIds.add(String(l.id));if(!customerIds.has(String(l.customerId)))issues.push(`Loan ${l.id} references missing customer ${l.customerId}.`);if(!positiveNumber(l.amount))issues.push(`Loan ${l.id} has invalid amount.`);if(!validISODate(l.startDate))issues.push(`Loan ${l.id} has invalid start date.`);});const scheduleIds=new Set();db.schedules.forEach(s=>{if(scheduleIds.has(String(s.id)))issues.push(`Duplicate schedule ID: ${s.id}`);scheduleIds.add(String(s.id));if(!loanIds.has(String(s.loanId)))issues.push(`Schedule ${s.id} references missing loan ${s.loanId}.`);if(!validISODate(s.dueDate))issues.push(`Schedule ${s.id} has invalid due date.`);if(Number(s.emi||0)<0||Number(s.principal||0)<0||Number(s.interest||0)<0||Number(s.penalty||0)<0)issues.push(`Schedule ${s.id} has a negative amount.`);});db.expiredCustomers.forEach(x=>{if(!customerIds.has(String(x.customerId)))issues.push(`Expired record ${x.id} references missing customer ${x.customerId}.`);});const paymentIds=new Set();db.payments.forEach(p=>{if(paymentIds.has(String(p.id)))issues.push(`Duplicate payment ID: ${p.id}`);paymentIds.add(String(p.id));const loan=loanIds.has(String(p.loanId));if(!loan)issues.push(`Payment ${p.id} references missing loan ${p.loanId}.`);if(!validISODate(p.date))issues.push(`Payment ${p.id} has invalid date.`);const principal=Number(p.principal||0),interest=Number(p.interest||0),penalty=Number(p.penalty||0),total=principal+interest+penalty;if([principal,interest,penalty,total].some(v=>!Number.isFinite(v)||v<0))issues.push(`Payment ${p.id} has invalid amounts.`);if(Math.abs(total-Number(p.total||0))>0.01)issues.push(`Payment ${p.id} total does not match its components.`);if(p.scheduleId&&!scheduleIds.has(String(p.scheduleId)))issues.push(`Payment ${p.id} references missing schedule ${p.scheduleId}.`);});return issues;}
 function blankDB(){return {customers:[],loans:[],schedules:[],payments:[],blacklist:[],notifications:[],deletedRecords:[],expiredCustomers:[],pendingQueue:[],settings:{appName:"Loan Management",currency:"INR",defaultInterest:2,defaultPenalty:0,reminderDays:[7,3,1,0],logoData:"",logoEnabled:true}}}
 function pendingQueue(){
   if(!Array.isArray(db.pendingQueue)) db.pendingQueue=[];
@@ -123,12 +123,10 @@ function buildMutationOperations(before,after){
 }
 function save(){
   if(!currentUser) return Promise.resolve();
-  // IMPORTANT: capture the database snapshot when the queued write actually
-  // starts, not when save() is called. Multiple UI actions can enqueue saves
-  // while a previous PUT is still in flight. Capturing the payload too early
-  // allowed a later queued write to contain an older snapshot and overwrite
-  // a newly recorded payment or pending-queue change.
-  saveQueue=saveQueue.then(async()=>{
+  // Serialize writes, but propagate failures to the caller. The queue itself
+  // remains usable after a failed request so one network error cannot disable
+  // every later save.
+  const run=saveQueue.catch(()=>{}).then(async()=>{
     const before=serverSnapshot||blankDB();
     const operations=buildMutationOperations(before,db);
     if(!operations.length){updateNotifCount();applyAppBranding();return;}
@@ -139,22 +137,34 @@ function save(){
       applyAppBranding();
     }catch(e){
       console.error(e);
-      toast(e.message||'Could not save data','err');
       try{await loadServerData();}catch{}
+      toast(e.message||'Could not save data','err');
+      throw e;
     }
   });
-  return saveQueue;
+  saveQueue=run.catch(()=>{});
+  return run;
 }
-function schedulePaymentTotals(s){
-  const seen=new Set(); let principalInterest=0, penalty=0;
-  // Explicit scheduleId is authoritative. Only legacy payments without a scheduleId
-  // use due-date matching, preventing one new payment from affecting other installments.
+function schedulePaymentBreakdown(s){
+  const seen=new Set(); let principal=0,interest=0,penalty=0;
   db.payments.filter(p=>{
     if(String(p.loanId)!==String(s.loanId)) return false;
     const sid=String(p.scheduleId||'').trim();
     return sid ? sid===String(s.id) : String(p.date||'')===String(s.dueDate||'');
-  }).forEach(p=>{const id=String(p.id);if(seen.has(id))return;seen.add(id);principalInterest+=Number(p.principal||0)+Number(p.interest||0);penalty+=Number(p.penalty||0);});
-  return {principalInterest,penalty};
+  }).forEach(p=>{const id=String(p.id);if(seen.has(id))return;seen.add(id);principal+=Number(p.principal||0);interest+=Number(p.interest||0);penalty+=Number(p.penalty||0);});
+  return {principal,interest,penalty,principalInterest:principal+interest,total:principal+interest+penalty};
+}
+function schedulePaymentTotals(s){
+  const t=schedulePaymentBreakdown(s);
+  return {principalInterest:t.principalInterest,penalty:t.penalty};
+}
+function schedulePrincipalDue(s){
+  const t=schedulePaymentBreakdown(s);
+  return Math.max(0,Number(s.principal||0)-t.principal);
+}
+function scheduleInterestDue(s){
+  const t=schedulePaymentBreakdown(s);
+  return Math.max(0,Number(s.interest||0)-t.interest);
 }
 function effectiveSchedulePaid(s){
   const t=schedulePaymentTotals(s);
@@ -177,15 +187,21 @@ function activeLoans(){return db.loans.filter(l=>!isExpiredCustomer(l.customerId
 
 let selectedCustomerId=null,selectedLoanId=null;
 function globalBranding(){return {appName:db.settings?.appName||"Loan Management",logoEnabled:db.settings?.logoEnabled!==false,logoData:db.settings?.logoData||""};}
-function saveGlobalBranding(x){db.settings={...(db.settings||blankDB().settings),...x};save();}
+function saveGlobalBranding(x){db.settings={...(db.settings||blankDB().settings),...x};}
 function applyAppBranding(){const g=globalBranding();const name=cleanText(g.appName||"Loan Management",100)||"Loan Management";const logoEnabled=g.logoEnabled!==false,logoSrc=g.logoData||"loan-management-logo.png";document.title=name;const title=document.getElementById("appTitle");if(title)title.textContent=name;const login=document.getElementById("loginAppName");if(login)login.textContent=name;const side=document.getElementById("sidebarAppName");if(side)side.textContent=name;const sideSub=document.getElementById("sidebarAppSubtitle");if(sideSub)sideSub.textContent="";const loginSub=document.getElementById("loginAppSubtitle");if(loginSub)loginSub.textContent="";const favicon=document.getElementById("appFavicon");if(favicon)favicon.href=logoEnabled?logoSrc:"loan-management-logo.png";[document.getElementById("loginLogo"),document.getElementById("sidebarLogo")].forEach(img=>{if(img){img.src=logoEnabled?logoSrc:"loan-management-logo.png";img.classList.toggle("logo-hidden",!logoEnabled)}})}
 function updateCurrentUserChip(){const u=currentUser||{name:"User",username:"",role:""};const chip=document.querySelector(".user-chip");if(chip)chip.innerHTML=`<span class="avatar">${esc((u.name||u.username||"A").charAt(0).toUpperCase())}</span><div><b>${esc(u.username||"User")}</b><small>${esc(u.role||"")}</small></div>`;refreshAdminNav();}
 function isExpiredCustomer(customerId){ return (db.expiredCustomers||[]).some(x=>String(x.customerId)===String(customerId)); }
 function isActiveCustomer(customerId){ return !isExpiredCustomer(customerId); }
 
 function uid(prefix){return prefix+"-"+Date.now().toString(36).toUpperCase()+"-"+Math.random().toString(36).slice(2,6).toUpperCase();}
-function nextCustomerId(){return "KK-"+String(db.customers.length+1).padStart(6,"0")}
-function nextLoanId(){return "KK-LN-"+String(db.loans.length+1).padStart(5,"0")}
+function nextCustomerId(){
+  const nums=db.customers.map(c=>{const m=String(c?.id||'').match(/^KK-(\d+)$/i);return m?Number(m[1]):0;});
+  return "KK-"+String(Math.max(0,...nums)+1).padStart(6,"0");
+}
+function nextLoanId(){
+  const nums=db.loans.map(l=>{const m=String(l?.id||'').match(/^KK-LN-(\d+)$/i);return m?Number(m[1]):0;});
+  return "KK-LN-"+String(Math.max(0,...nums)+1).padStart(5,"0");
+}
 function customerName(c){return [c.firstName,c.middleName,c.lastName].filter(Boolean).join(" ")}
 function loanPayments(loanId){return db.payments.filter(p=>p.loanId===loanId)}
 function paidPrincipal(loanId){return loanPayments(loanId).reduce((s,p)=>s+Number(p.principal||0),0)}
@@ -221,7 +237,7 @@ function nextDue(loan){
   }
   return null;
 }
-function dueAmount(s){return Math.max(0,Number(s.emi)-Number(s.paid||0)+Number(s.penalty||0))}
+function dueAmount(s){return effectiveDueAmount(s)}
 function statusForSchedule(s){
   const paid=Number(s.paid||0), emi=Number(s.emi||0), t=todayISO();
   if(paid>=emi) return "PAID";
@@ -387,18 +403,27 @@ function generateSchedule(loan){
 function recalculateFutureInterest(loanId){
   const l=db.loans.find(x=>String(x.id)===String(loanId));
   if(!l)return;
-  const schedules=scheduleFor(l.id).filter(s=>s.status!=="PAID");
-  const outstanding=loanOutstanding(l);
+  const schedules=scheduleFor(l.id);
+  const rate=Math.max(0,Number(l.interestRate||0))/100;
+  const method=String(l.method||'Flat Monthly');
+  const emiOption=String(l.emiOption||'YES').toUpperCase();
+  const currentOutstanding=loanOutstanding(l);
   schedules.forEach(s=>{
-    // Once principal has been paid, every still-unpaid monthly cycle uses the
-    // current remaining principal as its interest base. This means the next
-    // cycle immediately reflects the reduced balance.
-    const interest=Number((Math.max(0,outstanding)*Number(l.interestRate||0)/100).toFixed(2));
+    if(String(s.status||'').toUpperCase()==='PAID') return;
+    // Do not rewrite the economics of a partially paid current installment.
+    // Its agreed interest belongs to that cycle; only untouched future cycles
+    // should be recalculated from the new outstanding principal.
+    const paid=schedulePaymentBreakdown(s);
+    if(paid.total>0.005 && effectiveDueAmount(s)>0.005) return;
+    const originalPrincipal=Math.max(0,Number(s.principal||0));
+    const interestBase=method==='Flat Monthly' ? Number(l.amount||0) : currentOutstanding;
+    const interest=Number((Math.max(0,interestBase)*rate).toFixed(2));
     s.interest=interest;
-    const principalRemaining=Math.max(0,Number(s.principal||0)-Math.max(0,Number(s.paid||0)-Number(s.interest||0)));
-    // Do not overwrite a historical paid amount; only refresh the unpaid due.
+    if(emiOption==='NO') s.principal=0;
+    else s.principal=Math.min(originalPrincipal,currentOutstanding);
     s.emi=Number((Math.max(0,Number(s.principal||0))+interest).toFixed(2));
-    if(s.status!=="PAID") s.status=statusForSchedule(s);
+    s.penalty=Math.max(0,Number(l.penalty||0));
+    s.status=effectiveScheduleStatus(s);
   });
 }
 function refreshNotifications(){

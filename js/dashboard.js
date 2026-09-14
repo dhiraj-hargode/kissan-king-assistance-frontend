@@ -1,45 +1,104 @@
 // Dashboard and overview features.
-function confirmDeleteRecord(type,id){
+async function confirmDeleteRecord(type,id){
   if(currentUser?.role!=='Administrator') return;
   const labels={customer:"customer",loan:"loan",payment:"payment"};
   const label=labels[type]||"record";
   if(!confirm(`Delete this ${label}? The record will be moved to Deleted Records for audit.`)) return;
+
+  // Payment History is API-backed and may display a payment that is not in the
+  // current in-memory snapshot. Always refresh the authoritative normalized
+  // PostgreSQL data before resolving a destructive action.
+  try{
+    if(type==='payment') await loadServerData();
+    else await ensureServerDataLoaded();
+  }catch(e){
+    toast(e.message||'Could not load the latest data. Nothing was deleted.','err');
+    return;
+  }
+
   db.deletedRecords=db.deletedRecords||[];
   const deletedAt=new Date().toISOString();
+
   if(type==="customer"){
     const customer=db.customers.find(c=>String(c.id)===String(id));
+    if(!customer){toast("Customer not found. The list may be stale; please try again.","err");return;}
     const loans=db.loans.filter(l=>String(l.customerId)===String(id));
-    const loanIds=new Set(loans.map(l=>l.id));
-    const payments=db.payments.filter(p=>loanIds.has(p.loanId));
+    const loanIds=new Set(loans.map(l=>String(l.id)));
+    const payments=db.payments.filter(p=>loanIds.has(String(p.loanId)));
     if(payments.length){
       toast("Cannot delete a customer with payment history. Financial history must be preserved.","err"); return;
     }
-    db.deletedRecords.push({id:uid("DEL"),type:"customer",recordId:id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{customer,loans,schedules:db.schedules.filter(s=>String(s.customerId)===String(id)),blacklist:db.blacklist.filter(b=>String(b.customerId)===String(id))}});
-
-    db.customers=db.customers.filter(c=>c.id!==id);
-    db.loans=db.loans.filter(l=>l.customerId!==id);
-    db.schedules=db.schedules.filter(s=>s.customerId!==id);
-    db.blacklist=db.blacklist.filter(b=>b.customerId!==id);
+    const customerSchedules=db.schedules.filter(s=>String(s.customerId)===String(id));
+    db.deletedRecords.push({id:uid("DEL"),recordType:"customer",recordId:id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{customer,loans,schedules:customerSchedules,blacklist:db.blacklist.filter(b=>String(b.customerId)===String(id)),expiredCustomers:db.expiredCustomers.filter(x=>String(x.customerId)===String(id)),notifications:db.notifications.filter(n=>String(n.customerId)===String(id))}});
+    const scheduleIds=new Set(customerSchedules.map(s=>String(s.id)));
+    db.pendingQueue=(db.pendingQueue||[]).filter(q=>!scheduleIds.has(String(q)));
+    db.notifications=(db.notifications||[]).filter(n=>String(n.customerId)!==String(id));
+    db.expiredCustomers=(db.expiredCustomers||[]).filter(x=>String(x.customerId)!==String(id));
+    db.customers=db.customers.filter(c=>String(c.id)!==String(id));
+    db.loans=db.loans.filter(l=>String(l.customerId)!==String(id));
+    db.schedules=db.schedules.filter(s=>String(s.customerId)!==String(id));
+    db.blacklist=db.blacklist.filter(b=>String(b.customerId)!==String(id));
   }else if(type==="loan"){
     const loan=db.loans.find(l=>String(l.id)===String(id));
+    if(!loan){toast("Loan not found. The list may be stale; please try again.","err");return;}
     const payments=db.payments.filter(p=>String(p.loanId)===String(id));
     if(payments.length){
       toast("Cannot delete a loan with payment history. Preserve financial history instead.","err"); return;
     }
-    db.deletedRecords.push({id:uid("DEL"),type:"loan",recordId:id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{loan,schedules:db.schedules.filter(s=>String(s.loanId)===String(id))}});
-    db.loans=db.loans.filter(l=>l.id!==id);
-    db.schedules=db.schedules.filter(s=>s.loanId!==id);
+    const loanSchedules=db.schedules.filter(s=>String(s.loanId)===String(id));
+    const loanScheduleIds=new Set(loanSchedules.map(s=>String(s.id)));
+    db.deletedRecords.push({id:uid("DEL"),recordType:"loan",recordId:id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{loan,schedules:loanSchedules,notifications:db.notifications.filter(n=>String(n.loanId)===String(id))}});
+    db.pendingQueue=(db.pendingQueue||[]).filter(q=>!loanScheduleIds.has(String(q)));
+    db.notifications=(db.notifications||[]).filter(n=>String(n.loanId)!==String(id));
+    db.loans=db.loans.filter(l=>String(l.id)!==String(id));
+    db.schedules=db.schedules.filter(s=>String(s.loanId)!==String(id));
   }else if(type==="payment"){
     const p=db.payments.find(x=>String(x.id)===String(id));
-    if(!p){ toast("Payment entry not found.","err"); return; }
-    db.deletedRecords.push({id:uid("DEL"),type:"payment",recordId:p.id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{payment:{...p}}});
-    if(p){
-      const s=db.schedules.find(x=>x.id===p.scheduleId);
-      if(s){ s.paid=Math.max(0,Number(s.paid||0)-Number(p.principal||0)-Number(p.interest||0)); s.status=statusForSchedule(s); }
+    if(!p){toast("Payment entry not found in the latest database data. Nothing was deleted.","err");return;}
+
+    const s=db.schedules.find(x=>String(x.id)===String(p.scheduleId));
+    db.deletedRecords.push({id:uid("DEL"),recordType:"payment",recordId:p.id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{payment:{...p}}});
+
+    // Reverse only the amounts actually applied by this payment. The schedule
+    // is then recalculated so the installment becomes collectible again.
+    if(s){
+      s.paid=Math.max(0,Number(s.paid||0)-Number(p.principal||0)-Number(p.interest||0));
+      s.status=statusForSchedule(s);
+      s.updatedAt=new Date().toISOString();
     }
-    db.payments=db.payments.filter(p=>p.id!==id);
+    db.payments=db.payments.filter(x=>String(x.id)!==String(id));
+    recalculateFutureInterest(p.loanId);
+    if(s && s.pendingAddedAt && effectiveDueAmount(s)>0.005) addPendingQueueId(s);
   }
-  save(); toast(`${label[0].toUpperCase()+label.slice(1)} deleted`); closeModal(); renderPage(currentPage);
+
+  try{
+    refreshNotifications();
+    await save();
+
+    // Invalidate every API-backed page that can be affected by a payment or
+    // other destructive mutation, then redraw the page the user is viewing.
+    if(typeof paymentHistoryCache!=='undefined') paymentHistoryCache.clear();
+    if(typeof pendingCollectionState!=='undefined'){
+      pendingCollectionState.cache.clear();
+      pendingCollectionState.requestKey="";
+      pendingCollectionState.request=null;
+    }
+    if(typeof todayCollectionState!=='undefined'){
+      todayCollectionState.cache.clear();
+      todayCollectionState.requestKey="";
+      todayCollectionState.request=null;
+    }
+    if(typeof dashboardCache!=='undefined' && dashboardCache?.clear) dashboardCache.clear();
+    if(typeof customersPageState!=='undefined' && customersPageState?._cache) customersPageState._cache.clear();
+    if(typeof loansPageState!=='undefined' && loansPageState?._cache) loansPageState._cache.clear();
+
+    closeModal();
+    toast(`${label[0].toUpperCase()+label.slice(1)} deleted successfully`);
+    openPage(currentPage||'history');
+  }catch(e){
+    toast(e.message||'Could not delete record.','err');
+    try{await loadServerData();}catch{}
+  }
 }
 function printSection(title, html){
   const w=window.open("","_blank","width=1100,height=800");
@@ -93,15 +152,13 @@ function dashboardLoanStats(){
   grouped.forEach((schedules,loanId)=>{
     const l=db.loans.find(x=>String(x.id)===String(loanId));
     if(!l)return;
-    const scheduledAmount=schedules.reduce((sum,s)=>sum+Number(s.emi||0)+Number(s.penalty||0),0);
     const due=schedules.reduce((sum,s)=>sum+effectiveDueAmount(s),0);
     const payments=todaysPayments.filter(p=>String(p.loanId)===String(loanId) &&
       (schedules.some(x=>String(x.id)===String(p.scheduleId||'')) ||
        (!p.scheduleId && schedules.some(x=>String(x.dueDate)===String(p.date)))));
     const paidOnDate=payments.reduce((sum,p)=>sum+Number(p.total||0),0);
     const fullyPaid=schedules.every(s=>effectiveDueAmount(s)<=0.005);
-    const remainingDue=fullyPaid?0:Math.max(0,due-paidOnDate);
-    dueToday.push({loanId:String(loanId),loan:l,schedules,due:remainingDue,grossDue:Math.max(scheduledAmount,due),paidOnDate,fullyPaid});
+    dueToday.push({loanId:String(loanId),loan:l,schedules,due:Number(due.toFixed(2)),grossDue:Number(due.toFixed(2)),paidOnDate,fullyPaid});
   });
 
   const expected=dueToday.reduce((a,r)=>a+Number(r.grossDue||0),0);

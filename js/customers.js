@@ -191,7 +191,7 @@ function openEditCustomer(id){
   ["firstName","mobile","homeNumber","reference","address","city","district","pincode","guarantorName","guarantorMobile","guarantorRelation","guarantorAddress","notes"].forEach(k=>{const el=f.querySelector(`[name="${k}"]`);if(el)el.value=cu[k]||""});
   if(f.querySelector('[name="district"]') && cu.district) syncDistrictPincode(f);
 }
-function saveCustomerEdit(id){
+async function saveCustomerEdit(id){
   const cu=db.customers.find(c=>String(c.id)===String(id));
   const f=document.getElementById("editCustomerForm");
   if(!cu||!f)return;
@@ -199,11 +199,7 @@ function saveCustomerEdit(id){
   const errors=validateCustomerInput(o,id); if(errors.length){toast(errors[0],"err");return;}
   const keep={id:cu.id,legacyId:cu.legacyId,createdAt:cu.createdAt};
   Object.assign(cu,o,keep);
-  save();
-  toast("Customer details updated successfully");
-  closeModal();
-  renderPage(currentPage);
-  setTimeout(()=>viewCustomer(id),50);
+  try{ await save(); toast("Customer details updated successfully"); closeModal(); await renderPage(currentPage); if(currentPage!=="history") setTimeout(()=>viewCustomer(id),50); }catch(e){ toast(e.message||"Could not save customer changes","err"); }
 }
 
 async function viewCustomer(id){
@@ -218,12 +214,12 @@ async function viewCustomer(id){
     const schedules=Array.isArray(x.schedules)?x.schedules:[];
     const blacklist=Boolean(x.blacklist);
     const totalLoan=ls.reduce((a,l)=>a+Number(l.amount||0),0);
-    const paidByLoan={};
+    const paidPrincipalByLoan={};
     payments.forEach(p=>{
       const lid=String(p.loanId||"");
-      paidByLoan[lid]=(paidByLoan[lid]||0)+Number(p.total||0);
+      paidPrincipalByLoan[lid]=(paidPrincipalByLoan[lid]||0)+Number(p.principal||0);
     });
-    const paidForLoan=l=>Number(paidByLoan[String(l.id)]||0);
+    const paidForLoan=l=>Number(paidPrincipalByLoan[String(l.id)]||0);
     const outstanding=l=>Math.max(0,Number(l.amount||0)-paidForLoan(l));
     const body=`<div class="kpi-row">
       <div class="kpi"><b>${esc(cu.id)}</b><span>Customer ID</span></div>
@@ -300,7 +296,7 @@ function newLoan(customerId){
   form.querySelector('[name="penalty"]').value=db.settings.defaultPenalty;
 }
 
-function saveLoan(){
+async function saveLoan(){
   const form=document.getElementById("loanForm"); if(!form)return;
   const f=new FormData(form);const o=Object.fromEntries(f.entries());
   const cu=db.customers.find(c=>String(c.id)===String(o.customerId));
@@ -309,6 +305,6 @@ function saveLoan(){
   if(db.blacklist.some(b=>String(b.customerId)===String(o.customerId))) errors.push("Blacklisted customers cannot receive a new loan.");
   if(errors.length){toast(errors[0],"err");return;}
   const loan={id:nextLoanId(),customerId:cu.id,khataNo:cleanText(o.khataNo,50),loanType:cleanText(o.loanType,100),loanAgainst:cleanText(o.loanAgainst,100),emiOption:String(o.emiOption||"YES").toUpperCase(),amount:Number(o.amount),interestRate:Number(o.interestRate),startDate:o.startDate,duration:Number(o.duration),dueDay:loanDueDay({startDate:o.startDate}),method:o.method,penalty:Number(o.penalty||0),notes:cleanText(o.notes,1000),createdAt:new Date().toISOString(),activityCreatedAt:new Date().toISOString()};
-  loan.ownerId=getCurrentUser()?.id||"ADMIN";db.loans.push(loan);generateSchedule(loan);save();toast(`Loan created for ${customerName(cu)}`);closeModal();openPage("loans");
+  loan.ownerId=getCurrentUser()?.id||"ADMIN";db.loans.push(loan);generateSchedule(loan);try{await save();toast(`Loan created for ${customerName(cu)}`);closeModal();await openPage("loans");}catch(e){toast(e.message||"Could not save loan","err");}
 }
 
