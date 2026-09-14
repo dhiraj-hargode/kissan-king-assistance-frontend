@@ -97,11 +97,30 @@ function migratePendingQueue(){
 }
 function getCurrentUser(){return currentUser;}
 async function apiJSON(url,options={}){const r=await fetch(API_BASE+url,{credentials:'include',headers:{'Content-Type':'application/json',...(options.headers||{})},...options});let body={};try{body=await r.json()}catch{}if(!r.ok)throw new Error(body.error||`Request failed (${r.status})`);return body;}
-async function loadServerData(){const x=await apiJSON('/api/db');currentUser=x.user;db=x.data||blankDB();db.expiredCustomers=Array.isArray(db.expiredCustomers)?db.expiredCustomers:[];migratePendingQueue();serverDataLoaded=true;applyAppBranding();updateCurrentUserChip();return db;}
+async function loadServerData(){const x=await apiJSON('/api/db');currentUser=x.user;db=x.data||blankDB();db.expiredCustomers=Array.isArray(db.expiredCustomers)?db.expiredCustomers:[];migratePendingQueue();serverSnapshot=cloneData(db);serverDataLoaded=true;applyAppBranding();updateCurrentUserChip();return db;}
 async function ensureServerDataLoaded(){if(serverDataLoaded)return db;return loadServerData();}
 async function loadDashboardData(range='6m'){const date=todayISO();const x=await apiJSON(`/api/dashboard?date=${encodeURIComponent(date)}&range=${encodeURIComponent(range)}`);dashboardData=x.dashboard||null;currentUser=x.user||currentUser;return dashboardData;}
 async function loadPublicBranding(){try{const x=await apiJSON('/api/public/branding');const g=x.branding||{};db.settings={...(db.settings||blankDB().settings),appName:g.appName||db.settings?.appName||'Loan Management',logoData:g.logoData||db.settings?.logoData||'',logoEnabled:g.logoEnabled!==false};applyAppBranding();}catch(e){applyAppBranding();}}
 let saveQueue=Promise.resolve();
+let serverSnapshot=null;
+function cloneData(x){try{return JSON.parse(JSON.stringify(x));}catch{return null;}}
+function buildMutationOperations(before,after){
+  const ops=[];
+  const keys=["customers","loans","schedules","payments","blacklist","notifications","deletedRecords","expiredCustomers"];
+  for(const key of keys){
+    const b=Array.isArray(before?.[key])?before[key]:[];
+    const a=Array.isArray(after?.[key])?after[key]:[];
+    const bm=new Map(b.map(x=>[String(x?.id),x]));
+    const am=new Map(a.map(x=>[String(x?.id),x]));
+    for(const [id,record] of am){
+      if(!bm.has(id) || JSON.stringify(bm.get(id))!==JSON.stringify(record)) ops.push({type:key,action:bm.has(id)?"update":"create",id,record});
+    }
+    for(const id of bm.keys()) if(!am.has(id)) ops.push({type:key,action:"delete",id});
+  }
+  if(JSON.stringify(before?.pendingQueue||[])!==JSON.stringify(after?.pendingQueue||[])) ops.push({type:"pendingQueue",action:"replace",records:Array.isArray(after?.pendingQueue)?after.pendingQueue.map(String):[]});
+  if(JSON.stringify(before?.settings||{})!==JSON.stringify(after?.settings||{})) ops.push({type:"settings",action:"replace",record:after?.settings||{}});
+  return ops;
+}
 function save(){
   if(!currentUser) return Promise.resolve();
   // IMPORTANT: capture the database snapshot when the queued write actually
@@ -110,12 +129,12 @@ function save(){
   // allowed a later queued write to contain an older snapshot and overwrite
   // a newly recorded payment or pending-queue change.
   saveQueue=saveQueue.then(async()=>{
-    const payload=JSON.stringify({data:db});
+    const before=serverSnapshot||blankDB();
+    const operations=buildMutationOperations(before,db);
+    if(!operations.length){updateNotifCount();applyAppBranding();return;}
     try{
-      const x=await apiJSON('/api/db',{method:'PUT',body:payload});
-      // Do not replace the live client database with the response. The response
-      // can be an older snapshot relative to UI changes made while this request
-      // was in flight. The next queued save will persist the current db state.
+      await apiJSON('/api/mutations',{method:'POST',body:JSON.stringify({operations})});
+      serverSnapshot=cloneData(db);
       updateNotifCount();
       applyAppBranding();
     }catch(e){
