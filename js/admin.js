@@ -215,9 +215,7 @@ async function downloadPaymentsCSV(){
 }
 async function clearAllData(){
   if(currentUser?.role!=="Administrator"){toast("Only Administrators can clear data.","err");return;}
-  const firstConfirm=window.confirm("⚠️ CLEAR ALL BUSINESS DATA\n\nThis will permanently remove ALL customers, loans, schedules, payments, blacklist entries, notifications, expired records and pending items from the server.\n\nSettings and administrator accounts will be preserved.\n\nDo you want to continue?");
-  if(!firstConfirm){toast("Data was not cleared.");return;}
-  const answer=prompt("Final confirmation: type DELETE to permanently clear all business data.");
+  const answer=prompt("This permanently clears ALL customers, loans, schedules, payments, blacklist, notifications, expired records and pending items on the server. Settings and administrator accounts are preserved. Type DELETE to continue:");
   if(answer!=="DELETE"){toast("Data was not cleared.","err");return;}
   try{
     const result=await apiJSON('/api/admin/clear-data',{method:'POST',body:JSON.stringify({confirm:'DELETE'})});
@@ -290,13 +288,7 @@ function renderSettings(c){
   document.getElementById("logoFile").onchange=e=>{const file=e.target.files[0];if(!file)return;if(file.size>2*1024*1024){toast("Logo must be 2 MB or smaller.","err");e.target.value="";return;}if(!/^image\/(png|jpeg|jpg|svg\+xml)$/.test(file.type)){toast("Use PNG, JPG/JPEG or SVG.","err");e.target.value="";return;}const r=new FileReader();r.onload=()=>{preview.src=r.result;preview.dataset.pending=r.result;toast("Logo ready. Click Save Settings to apply it.")};r.readAsDataURL(file)};
   f.onsubmit=e=>{e.preventDefault();const interest=Number(f.defaultInterest.value),penalty=Number(f.defaultPenalty.value);const reminders=f.reminders.value.split(",").map(x=>Number(x.trim())).filter(x=>Number.isInteger(x)&&x>=0&&x<=365);if(!cleanText(f.appName.value,100)){toast("Application name is required.","err");return;}if(!Number.isFinite(interest)||interest<0||interest>100){toast("Default interest must be between 0 and 100%.","err");return;}if(!Number.isFinite(penalty)||penalty<0){toast("Default penalty cannot be negative.","err");return;}if(!reminders.length){toast("Enter at least one valid reminder day.","err");return;}db.settings.appName=cleanText(f.appName.value,100);db.settings.defaultInterest=interest;db.settings.defaultPenalty=penalty;db.settings.reminderDays=[...new Set(reminders)].sort((a,b)=>b-a);db.settings.logoEnabled=document.getElementById("logoEnabled").checked;const pending=preview.dataset.pending;if(pending){db.settings.logoData=pending;delete preview.dataset.pending;}const next={...globalBranding(),appName:db.settings.appName,logoEnabled:db.settings.logoEnabled,logoData:db.settings.logoData||g.logoData||""};saveGlobalBranding(next);save();applyAppBranding();toast("Settings saved")}
 }
-async function removeApplicationLogo(){
-  if(currentUser?.role!=="Administrator"){toast("Only Administrators can remove the application logo.","err");return;}
-  if(!window.confirm("Remove the custom application logo and restore the default logo?"))return;
-  const g=globalBranding();g.logoData="";g.logoEnabled=true;saveGlobalBranding(g);db.settings.logoData="";db.settings.logoEnabled=true;await save();applyAppBranding();
-  const p=document.getElementById("settingsLogoPreview");if(p)p.src="loan-management-logo.png";
-  toast("Custom logo removed. Default logo restored.");
-}
+function removeApplicationLogo(){const g=globalBranding();g.logoData="";g.logoEnabled=true;saveGlobalBranding(g);db.settings.logoData="";db.settings.logoEnabled=true;save();applyAppBranding();const p=document.getElementById("settingsLogoPreview");if(p)p.src="loan-management-logo.png";toast("Custom logo removed. Default logo restored.")}
 
 let globalSearchTimer=null;
 async function renderSearchResults(q){

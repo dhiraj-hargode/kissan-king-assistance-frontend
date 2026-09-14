@@ -112,7 +112,7 @@ async function loanAction(select,id){
   try{
     if(action==="view"){await viewLoan(id);return;}
     await ensureServerDataLoaded();
-    switch(action){case "edit":openEditLoan(id);break;case "schedule":showSchedule(id);break;case "history":openPaymentHistory(null,id);break;case "payment":openPaymentFor(id);break;case "delete":await confirmDeleteRecord("loan",id);break;}
+    switch(action){case "edit":openEditLoan(id);break;case "schedule":showSchedule(id);break;case "history":openPaymentHistory(null,id);break;case "payment":openPaymentFor(id);break;case "delete":confirmDeleteRecord("loan",id);break;}
   }catch(e){console.error(e);toast(e.message||"Could not load loan data","err");}
 }
 async function viewLoan(id){
