@@ -178,7 +178,7 @@ async function restoreBackup(){
   const button=document.querySelector('[onclick="restoreBackup()"]');
   const f=input?.files?.[0];
   if(!f)return toast("Select a JSON backup file.","err");
-  if(f.size>10*1024*1024)return toast("Backup file must be 10 MB or smaller.","err");
+  if(f.size>50*1024*1024)return toast("Backup file must be 50 MB or smaller.","err");
   if(!confirm("Restore this backup? It will replace all current customers, loans, schedules, payments and related business data."))return;
 
   if(button){button.disabled=true;button.dataset.originalText=button.textContent;button.textContent="Restoring…";}
