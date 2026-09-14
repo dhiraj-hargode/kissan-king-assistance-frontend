@@ -170,17 +170,10 @@ function effectiveSchedulePaid(s){
   const t=schedulePaymentTotals(s);
   return Math.max(Number(s.paid||0),t.principalInterest);
 }
-function scheduleApplicablePenalty(s, asOf=todayISO()){
-  // Penalty is charged ONLY after an installment becomes overdue.
-  // Due-today and future installments never carry a penalty.
-  if(!s || !validISODate(s.dueDate) || String(s.dueDate)>=String(asOf)) return 0;
-  const loan=db.loans.find(l=>String(l.id)===String(s.loanId));
-  return Math.max(0,Number(loan?.penalty||s.penalty||0));
-}
-function effectiveDueAmount(s, asOf=todayISO()){
+function effectiveDueAmount(s){
   const t=schedulePaymentTotals(s);
   const installment=Math.max(0,Number(s.emi||0)-effectiveSchedulePaid(s));
-  const unpaidPenalty=Math.max(0,scheduleApplicablePenalty(s,asOf)-t.penalty);
+  const unpaidPenalty=Math.max(0,Number(s.penalty||0)-t.penalty);
   return Number((installment+unpaidPenalty).toFixed(2));
 }
 function effectiveScheduleStatus(s,asOf=todayISO()){
@@ -343,7 +336,7 @@ function ensureLegacyOperationalSchedules(untilDate=todayISO()){
         added.push({
           id:sid,loanId:l.id,customerId:l.customerId,
           installment:900000+added.length+1,dueDate,
-          principal,interest,emi,paid:0,penalty:0,
+          principal,interest,emi,paid:0,penalty:Number(l.penalty||0),
           status:statusForSchedule({dueDate,paid:0,emi}),
           legacyReconstructed:isLegacy
         });
@@ -444,7 +437,7 @@ function ensureConfiguredLoanSchedule(loan){
         if(Math.abs(Number(s.principal||0)-principal)>0.005){s.principal=principal;changed=true;}
         if(Math.abs(Number(s.interest||0)-interest)>0.005){s.interest=interest;changed=true;}
         if(Math.abs(Number(s.emi||0)-emi)>0.005){s.emi=emi;changed=true;}
-        if(Number(s.penalty||0)!==0){s.penalty=0;changed=true;}
+        if(Math.abs(Number(s.penalty||0)-Number(loan.penalty||0))>0.005){s.penalty=Math.max(0,Number(loan.penalty||0));changed=true;}
         const nextStatus=effectiveScheduleStatus(s);
         if(s.status!==nextStatus){s.status=nextStatus;changed=true;}
       }
@@ -500,7 +493,7 @@ function recalculateFutureInterest(loanId){
       s.principal=contractPrincipal;
       s.interest=contractInterest;
       s.emi=Number((contractPrincipal+contractInterest).toFixed(2));
-      s.penalty=0;
+      s.penalty=Math.max(0,Number(l.penalty||0));
       s.status=effectiveScheduleStatus(s);
     }
     scheduledPrincipalBefore+=contractPrincipal;

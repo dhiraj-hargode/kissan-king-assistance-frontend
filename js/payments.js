@@ -43,8 +43,7 @@ async function openPaymentFor(loanId,scheduleId=null){
   // accidentally saving the full installment defaults.
   f.principal.value="";
   f.interest.value="";
-  const applicablePenalty=scheduleApplicablePenalty(s);
-  f.penalty.value=Math.max(0,applicablePenalty-db.payments.filter(p=>String(p.scheduleId||'')===String(s.id)).reduce((a,p)=>a+Number(p.penalty||0),0));
+  f.penalty.value=Math.max(0,Number(s.penalty||0)-db.payments.filter(p=>String(p.scheduleId||'')===String(s.id)).reduce((a,p)=>a+Number(p.penalty||0),0));
   f.mode.value="Cash";
 }
 function calculatePaymentAmounts(loanId,scheduleId){
@@ -331,10 +330,8 @@ function repaymentScheduleDisplayRows(loan){
     const paidInterest=Math.max(0,Number(pay.interest||0));
     const paidPenalty=Math.max(0,Number(pay.penalty||0));
     const paidTotal=Number((paidPrincipal+paidInterest+paidPenalty).toFixed(2));
-    // Penalty is NOT part of the contractual EMI. It is charged separately
-    // only when this installment is overdue.
-    const scheduledPenalty=scheduleApplicablePenalty({...s,dueDate});
-    const scheduledEmi=Math.max(0,Number(s.emi||scheduledPrincipal+scheduledInterest));
+    const scheduledPenalty=Math.max(0,Number(s.penalty||0));
+    const scheduledEmi=Math.max(0,Number(s.emi||scheduledPrincipal+scheduledInterest+scheduledPenalty));
 
     cumulativePrincipalPaid += paidPrincipal;
     const remaining=Math.max(0,Number(loan.amount||0)-cumulativePrincipalPaid);
@@ -346,9 +343,8 @@ function repaymentScheduleDisplayRows(loan){
       dueDate,
       principal:scheduledPrincipal,
       interest:scheduledInterest,
-      emi:Number((scheduledPrincipal+scheduledInterest).toFixed(2)) || scheduledEmi,
+      emi:Number((scheduledPrincipal+scheduledInterest+scheduledPenalty).toFixed(2)) || scheduledEmi,
       paid:effectivePaid,
-      penalty:scheduledPenalty,
       remaining,
       status
     });
@@ -380,7 +376,7 @@ async function renderSelectedSchedule(loan){
   const totalInterest=rows.reduce((a,s)=>a+Number(s.interest||0),0);
   const closed=loanOutstanding(loan)<=0.005 || String(loan.status||'').toUpperCase()==='COMPLETED' || String(loan.status||'').toUpperCase()==='CLOSED';
   area.className='';
-  area.innerHTML=`<div class="kpi-row"><div class="kpi"><b>${esc(customerName(cu||{}))}</b><span>Customer</span></div><div class="kpi"><b>${money(loan.amount)}</b><span>Loan Amount</span></div><div class="kpi"><b>${loan.interestRate}%</b><span>Monthly Interest</span></div><div class="kpi"><b>${money(totalInterest)}</b><span>Total Interest</span></div></div>${closed?`<div class="notice" style="margin:12px 0">✓ Loan completed — schedule ends on the final payment. Future zero-value installments are not shown.</div>`:''}<div class="actions no-print" style="margin:15px 0"><button class="btn" onclick="window.print()">🖨 Print</button></div><div class="loan-schedule-desktop"><div class="table-wrap"><table class="data-table"><thead><tr><th>Sr No</th><th>Due Date</th><th>Principal</th><th>Interest</th><th>EMI</th><th>Paid</th><th>Penalty</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${rows.map(s=>`<tr><td>${s.installment}</td><td>${fmtDate(s.dueDate)}</td><td>${money(s.principal)}</td><td>${money(s.interest)}</td><td>${money(s.emi)}</td><td>${money(s.paid)}</td><td>${money(s.penalty)}</td><td><b>${money(s.remaining)}</b></td><td><span class="badge ${s.status==='PAID'?'green':s.status==='OVERDUE'?'red':s.status==='DUE TODAY'?'amber':'blue'}">${s.status}</span></td></tr>`).join('')}</tbody></table></div></div><div class="loan-schedule-mobile">${rows.map(s=>`<article class="schedule-mobile-card"><div class="schedule-mobile-head"><div><b>Installment ${s.installment}</b><span>Due ${fmtDate(s.dueDate)}</span></div><span class="badge ${s.status==='PAID'?'green':s.status==='OVERDUE'?'red':s.status==='DUE TODAY'?'amber':'blue'}">${s.status}</span></div><div class="schedule-mobile-grid"><div><small>Principal</small><b>${money(s.principal)}</b></div><div><small>Interest</small><b>${money(s.interest)}</b></div><div><small>EMI</small><b>${money(s.emi)}</b></div><div><small>Paid</small><b>${money(s.paid)}</b></div><div><small>Penalty</small><b>${money(s.penalty)}</b></div><div><small>Remaining</small><b>${money(s.remaining)}</b></div></div></article>`).join('')}</div>`;
+  area.innerHTML=`<div class="kpi-row"><div class="kpi"><b>${esc(customerName(cu||{}))}</b><span>Customer</span></div><div class="kpi"><b>${money(loan.amount)}</b><span>Loan Amount</span></div><div class="kpi"><b>${loan.interestRate}%</b><span>Monthly Interest</span></div><div class="kpi"><b>${money(totalInterest)}</b><span>Total Interest</span></div></div>${closed?`<div class="notice" style="margin:12px 0">✓ Loan completed — schedule ends on the final payment. Future zero-value installments are not shown.</div>`:''}<div class="actions no-print" style="margin:15px 0"><button class="btn" onclick="window.print()">🖨 Print</button></div><div class="loan-schedule-desktop"><div class="table-wrap"><table class="data-table"><thead><tr><th>Sr No</th><th>Due Date</th><th>Principal</th><th>Interest</th><th>EMI</th><th>Paid</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${rows.map(s=>`<tr><td>${s.installment}</td><td>${fmtDate(s.dueDate)}</td><td>${money(s.principal)}</td><td>${money(s.interest)}</td><td>${money(s.emi)}</td><td>${money(s.paid)}</td><td><b>${money(s.remaining)}</b></td><td><span class="badge ${s.status==='PAID'?'green':s.status==='OVERDUE'?'red':s.status==='DUE TODAY'?'amber':'blue'}">${s.status}</span></td></tr>`).join('')}</tbody></table></div></div><div class="loan-schedule-mobile">${rows.map(s=>`<article class="schedule-mobile-card"><div class="schedule-mobile-head"><div><b>Installment ${s.installment}</b><span>Due ${fmtDate(s.dueDate)}</span></div><span class="badge ${s.status==='PAID'?'green':s.status==='OVERDUE'?'red':s.status==='DUE TODAY'?'amber':'blue'}">${s.status}</span></div><div class="schedule-mobile-grid"><div><small>Principal</small><b>${money(s.principal)}</b></div><div><small>Interest</small><b>${money(s.interest)}</b></div><div><small>EMI</small><b>${money(s.emi)}</b></div><div><small>Paid</small><b>${money(s.paid)}</b></div><div><small>Remaining</small><b>${money(s.remaining)}</b></div></div></article>`).join('')}</div>`;
 }
 async function searchSchedule(q){
   await ensureServerDataLoaded();
