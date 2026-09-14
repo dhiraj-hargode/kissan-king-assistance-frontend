@@ -311,7 +311,7 @@ function repaymentScheduleDisplayRows(loan){
     const installment=++displayInstallment;
     const dueDate=isOperational
       ? (validISODate(s.dueDate)?s.dueDate:monthlyDueDate(loan.startDate,installment-1))
-      : (monthlyDueDate(loan.startDate,installment-1) || s.dueDate);
+      : (monthlyDueDate(loan.startDate,installment) || s.dueDate);
     if(!validISODate(dueDate)) continue;
     const pay=scheduleLedgerPayments({...s,dueDate});
 
