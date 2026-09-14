@@ -13,6 +13,13 @@ async function loadTodayCollection(c,date=todayISO(),search=todayCollectionState
     .finally(()=>{todayCollectionState.loading=false;todayCollectionState.request=null;});
   return todayCollectionState.request;
 }
+function normalizeTodaySearch(value){
+  if(value && typeof value === "object" && "value" in value){
+    value=value.value;
+  }
+  return String(value ?? "").trim();
+}
+
 function renderToday(c){
   const selected=window.todayCollectionDate||todayISO();
   const search=normalizeTodaySearch(window.todayFilter);
