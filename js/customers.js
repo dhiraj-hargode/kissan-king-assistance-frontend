@@ -244,7 +244,7 @@ function loadAndUnblacklist(id){return loadAndEnsureCustomerAction(unblacklist,i
 function loadAndBlacklistCustomer(id){return loadAndEnsureCustomerAction(openBlacklistForm,id)}
 function loadAndDeleteCustomer(id){return loadAndEnsureCustomerAction(()=>confirmDeleteRecord("customer",id),id)}
 function loadAndNewLoan(id){return loadAndEnsureCustomerAction(newLoan,id)}
-function loadAndViewLoan(id){return loadAndEnsureCustomerAction(viewLoan,id)}
+function loadAndViewLoan(id){return viewLoan(id)}
 
 function printCustomer(id){
   const cu=db.customers.find(c=>c.id===id);if(!cu)return;

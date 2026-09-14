@@ -1,34 +1,134 @@
 // Loan creation, editing, details and loan actions.
-function renderLoans(c){
-  c.innerHTML=header("Loans","All loans and outstanding balances.",`<button class="btn primary" onclick="openPage('customers')">Select Customer → New Loan</button>`);
-  const loans=activeLoans();
-  const loanRows=loans.map(l=>{
-    const cu=db.customers.find(x=>x.id===l.customerId), rem=loanOutstanding(l), overdue=scheduleFor(l.id).some(s=>s.status==="OVERDUE"), st=rem<=0?"COMPLETED":overdue?"OVERDUE":"ACTIVE";
-    const badge=st==="OVERDUE"?"red":st==="COMPLETED"?"blue":"green";
-    const search=esc((l.id+" "+(l.khataNo||"")+" "+customerName(cu||{})+" "+(cu?.mobile||"")+" "+(l.loanType||"")+" "+(l.loanAgainst||"")+" "+st).toLowerCase());
-    const action=`<select class="action-select" aria-label="Loan actions for ${esc(l.id)}" onchange="loanAction(this,'${l.id}')"><option value="">Actions</option><option value="view">View</option><option value="edit">Edit Loan</option><option value="schedule">Schedule</option><option value="history">Payment History</option><option value="payment">Add Payment</option><option value="delete" ${currentUser?.role==='Administrator' ? '' : 'disabled'}>Delete (Administrator only)</option></select>`;
-    return {l,cu,rem,st,badge,search,action};
-  });
-  c.innerHTML+=`<div class="card section-card loan-page-card">
-    <div class="toolbar"><input class="grow" id="loanFilter" placeholder="Search loan ID, customer or mobile..." oninput="filterGeneric('loanTable',this.value)"><select id="loanStatusFilter" onchange="filterGeneric('loanTable',document.getElementById('loanFilter').value)"><option value="">All Status</option><option>ACTIVE</option><option>COMPLETED</option><option>OVERDUE</option></select></div>
-    <div class="loan-desktop-list"><div class="table-wrap"><table class="data-table loan-table" id="loanTable"><thead><tr><th>Loan ID</th><th>Khata</th><th>Customer</th><th>Against</th><th>Amount</th><th>Rate</th><th>EMI</th><th>Start</th><th>Remaining</th><th>Status</th><th class="loan-actions-head">Actions</th></tr></thead><tbody>${loanRows.map(r=>`<tr data-search="${r.search}"><td>${r.l.id}</td><td><b>${esc(r.l.khataNo||r.l.legacyKhataNo||"-")}</b></td><td>${esc(customerName(r.cu||{}))}</td><td>${esc(r.l.loanAgainst||"-")}</td><td>${money(r.l.amount)}</td><td>${r.l.interestRate}%</td><td>${esc(String(r.l.emiOption||"YES"))}</td><td>${fmtDate(r.l.startDate)}</td><td>${money(r.rem)}</td><td><span class="badge ${r.badge}">${r.st}</span></td><td class="loan-actions-cell">${r.action}</td></tr>`).join("")}</tbody></table></div></div>
-    <div class="loan-mobile-list" id="loanMobileList">${loanRows.map(r=>`<article class="loan-mobile-card" data-search="${r.search}" data-status="${r.st}"><div class="loan-mobile-head"><div><b>${esc(r.l.id)}</b><span>${esc(r.l.khataNo||r.l.legacyKhataNo||"-")}</span></div><span class="badge ${r.badge}">${r.st}</span></div><div class="loan-mobile-customer"><b>${esc(customerName(r.cu||{}))}</b><span>${esc(r.cu?.mobile||"")}</span></div><div class="loan-mobile-grid"><div><small>Against</small><b>${esc(r.l.loanAgainst||"-")}</b></div><div><small>Amount</small><b>${money(r.l.amount)}</b></div><div><small>Rate</small><b>${r.l.interestRate}%</b></div><div><small>EMI</small><b>${esc(String(r.l.emiOption||"YES"))}</b></div><div><small>Start</small><b>${fmtDate(r.l.startDate)}</b></div><div><small>Remaining</small><b>${money(r.rem)}</b></div></div><div class="loan-mobile-action">${r.action}</div></article>`).join("")}</div>
-    ${loans.length?"":"<div class='empty'><div class='emoji'>💰</div><h3>No loans yet</h3><p>Create a customer first, then create a loan.</p></div>"}
-  </div>`;
+let loanPageState={page:1,limit:50,search:"",status:"",loading:false,total:0,totalPages:1};
+let loanSearchTimer=null;
+let loanListRequest=null;
+let loanListRequestKey="";
+let loanListCache={key:"",expiresAt:0,payload:null};
+
+async function loadLoansPage(page=loanPageState.page, search=loanPageState.search, status=loanPageState.status){
+  const c=document.getElementById("content");
+  if(!c)return;
+  loanPageState.loading=true;
+  loanPageState.page=Math.max(1,Number(page)||1);
+  loanPageState.search=String(search||"").trim();
+  loanPageState.status=String(status||"").trim().toUpperCase();
+  const params=new URLSearchParams({page:String(loanPageState.page),limit:String(loanPageState.limit),search:loanPageState.search,status:loanPageState.status,sort:"startDate",order:"desc",date:todayISO()});
+  const requestKey=params.toString();
+  let x;
+  const now=Date.now();
+  if(loanListCache.key===requestKey && loanListCache.payload && loanListCache.expiresAt>now){
+    x=loanListCache.payload;
+  }else if(loanListRequest && loanListRequestKey===requestKey){
+    x=await loanListRequest;
+  }else{
+    loanListRequestKey=requestKey;
+    loanListRequest=apiJSON(`/api/loans?${requestKey}`);
+    try{
+      x=await loanListRequest;
+      loanListCache={key:requestKey,expiresAt:Date.now()+3000,payload:x};
+    }finally{
+      loanListRequest=null;
+      loanListRequestKey="";
+    }
+  }
+  const pagination=x.pagination||{};
+  loanPageState.page=Number(pagination.page||1);
+  loanPageState.total=Number(pagination.total||0);
+  loanPageState.totalPages=Number(pagination.totalPages||1);
+  loanPageState.loading=false;
+  renderLoansFromApi(c,Array.isArray(x.loans)?x.loans:[]);
 }
 
-function filterGeneric(id,q){
-  q=(q||"").toLowerCase();
-  const st=document.getElementById("loanStatusFilter")?.value||"";
-  document.querySelectorAll("#"+id+" tbody tr").forEach(r=>r.style.display=((r.dataset.search||"").includes(q)&&(st===""||r.dataset.search.includes(st.toLowerCase())))?"":"none");
-  document.querySelectorAll("#loanMobileList .loan-mobile-card").forEach(r=>r.style.display=((r.dataset.search||"").includes(q)&&(st===""||r.dataset.status===st))?"":"none");
+async function renderLoans(c){
+  c.innerHTML=header("Loans","All loans and outstanding balances.",`<button class="btn primary" onclick="openPage('customers')">Select Customer → New Loan</button>`)+`
+    <div class="card section-card loan-page-card">
+      <div class="toolbar">
+        <input class="grow" id="loanFilter" value="${esc(loanPageState.search)}" placeholder="Search loan ID, customer, mobile, Khata or customer ID..." oninput="loanSearchChanged(this.value)">
+        <select id="loanStatusFilter" onchange="loanStatusChanged(this.value)"><option value="" ${!loanPageState.status?'selected':''}>All Status</option><option value="ACTIVE" ${loanPageState.status==='ACTIVE'?'selected':''}>ACTIVE</option><option value="COMPLETED" ${loanPageState.status==='COMPLETED'?'selected':''}>COMPLETED</option><option value="OVERDUE" ${loanPageState.status==='OVERDUE'?'selected':''}>OVERDUE</option><option value="DEAD" ${loanPageState.status==='DEAD'?'selected':''}>DEAD</option></select>
+      </div>
+      <div id="loansApiBody"><div class="empty"><div class="emoji">⏳</div><h3>Loading loans...</h3></div></div>
+    </div>`;
+  await loadLoansPage(loanPageState.page,loanPageState.search,loanPageState.status);
 }
-function loanAction(select,id){const action=select.value;select.value="";if(!action)return;switch(action){case "view":viewLoan(id);break;case "edit":openEditLoan(id);break;case "schedule":showSchedule(id);break;case "history":openPaymentHistory(null,id);break;case "payment":openPaymentFor(id);break;case "delete":confirmDeleteRecord("loan",id);break;}}
-function viewLoan(id){
-  const l=db.loans.find(x=>String(x.id)===String(id)); if(!l){toast("Loan not found.","err");return;}
-  const cu=db.customers.find(x=>String(x.id)===String(l.customerId)); const paid=paidPrincipal(l.id), rem=loanOutstanding(l);
-  const status=rem<=0?"CLOSED":(String(l.status||"").toUpperCase()==="DEAD"?"DEAD":"ACTIVE");
-  openModal(`Loan Details — ${esc(l.id)}`,`<div class="kpi-row"><div class="kpi"><b>${esc(customerName(cu||{}))}</b><span>Customer</span></div><div class="kpi"><b>${esc(l.khataNo||"-")}</b><span>Khata No</span></div><div class="kpi"><b>${money(l.amount)}</b><span>Original Amount</span></div><div class="kpi"><b>${money(rem)}</b><span>Outstanding</span></div></div><div class="loan-detail-summary"><div class="box"><b>Loan Date</b>${fmtDate(l.startDate)}</div><div class="box"><b>Type</b>${esc(l.loanType||"-")}</div><div class="box"><b>Against</b>${esc(l.loanAgainst||"-")}</div><div class="box"><b>Interest</b>${esc(String(l.interestRate||0))}%</div><div class="box"><b>EMI</b>${esc(String(l.emiOption||"YES"))}</div><div class="box"><b>Status</b><span class="badge ${status==='ACTIVE'?'green':status==='CLOSED'?'blue':'red'}">${status}</span></div></div><div class="notice" style="margin-top:16px">Paid principal: <b>${money(paid)}</b> · Total collected: <b>${money(totalPaid(l.id))}</b> · Next due: <b>${nextDue(l)?fmtDate(nextDue(l).dueDate):"None"}</b></div>`,`<button class="btn" onclick="closeModal();showSchedule('${esc(l.id)}')">Schedule</button><button class="btn" onclick="closeModal();openPaymentHistory(null,'${esc(l.id)}')">Payment History</button><button class="btn primary" onclick="closeModal();openEditLoan('${esc(l.id)}')">✏ Edit Loan</button><button class="btn" onclick="closeModal();openPaymentFor('${esc(l.id)}')">＋ Add Payment</button><button class="btn" onclick="closeModal()">Close</button>`);
+
+function loanSearchChanged(value){
+  loanPageState.search=String(value||"").trim();
+  loanPageState.page=1;
+  clearTimeout(loanSearchTimer);
+  loanSearchTimer=setTimeout(()=>loadLoansPage(1,loanPageState.search,loanPageState.status).catch(e=>{
+    console.error(e);
+    const body=document.getElementById("loansApiBody");
+    if(body)body.innerHTML=`<div class="empty"><div class="emoji">⚠</div><h3>Could not search loans</h3><p>${esc(e.message||'Request failed')}</p></div>`;
+  }),300);
+}
+
+function loanStatusChanged(value){
+  loanPageState.status=String(value||"").toUpperCase();
+  loanPageState.page=1;
+  loadLoansPage(1,loanPageState.search,loanPageState.status).catch(e=>{
+    console.error(e);toast(e.message||"Could not filter loans","err");
+  });
+}
+
+function renderLoansFromApi(c,rows){
+  const body=document.getElementById("loansApiBody");
+  if(!body)return;
+  const total=loanPageState.total;
+  const totalPages=loanPageState.totalPages;
+  const current=loanPageState.page;
+  const loanRows=rows.map(l=>{
+    const cu=l.customer||{};
+    const rem=Number(l.remaining||0);
+    const st=String(l.computedStatus||"ACTIVE").toUpperCase();
+    const badge=st==="OVERDUE"||st==="DEAD"?"red":st==="COMPLETED"?"blue":"green";
+    const search=esc([l.id,l.khataNo,l.legacyKhataNo,customerName(cu),cu.mobile,cu.id,l.loanType,l.loanAgainst,st].filter(Boolean).join(" ").toLowerCase());
+    const action=`<select class="action-select" aria-label="Loan actions for ${esc(l.id)}" onchange="loanAction(this,'${esc(l.id)}')"><option value="">Actions</option><option value="view">View</option><option value="edit">Edit Loan</option><option value="schedule">Schedule</option><option value="history">Payment History</option><option value="payment">Add Payment</option><option value="delete" ${currentUser?.role==='Administrator' ? '' : 'disabled'}>Delete (Administrator only)</option></select>`;
+    return {l,cu,rem,st,badge,search,action};
+  });
+  if(!loanRows.length){
+    body.innerHTML=`<div class="empty"><div class="emoji">💰</div><h3>${loanPageState.search||loanPageState.status?"No loans found":"No loans yet"}</h3><p>${loanPageState.search||loanPageState.status?"Try a different search or status filter.":"Create a customer first, then create a loan."}</p></div>`;
+    return;
+  }
+  const pagination=`<div class="toolbar" style="justify-content:space-between;align-items:center;margin-top:16px">
+    <span class="muted">Showing ${((current-1)*loanPageState.limit)+1}-${Math.min(current*loanPageState.limit,total)} of ${total} loans</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn" ${current<=1?'disabled':''} onclick="changeLoanPage(${current-1})">← Previous</button>
+      <span class="muted">Page ${current} of ${totalPages}</span>
+      <button class="btn" ${current>=totalPages?'disabled':''} onclick="changeLoanPage(${current+1})">Next →</button>
+    </div>
+  </div>`;
+  body.innerHTML=`<div class="loan-desktop-list"><div class="table-wrap"><table class="data-table loan-table" id="loanTable"><thead><tr><th>Loan ID</th><th>Khata</th><th>Customer</th><th>Against</th><th>Amount</th><th>Rate</th><th>EMI</th><th>Start</th><th>Remaining</th><th>Status</th><th class="loan-actions-head">Actions</th></tr></thead><tbody>${loanRows.map(r=>`<tr data-search="${r.search}"><td>${esc(r.l.id)}</td><td><b>${esc(r.l.khataNo||r.l.legacyKhataNo||"-")}</b></td><td>${esc(customerName(r.cu||{}))}</td><td>${esc(r.l.loanAgainst||"-")}</td><td>${money(r.l.amount)}</td><td>${esc(String(r.l.interestRate||0))}%</td><td>${esc(String(r.l.emiOption||"YES"))}</td><td>${fmtDate(r.l.startDate)}</td><td>${money(r.rem)}</td><td><span class="badge ${r.badge}">${r.st}</span></td><td class="loan-actions-cell">${r.action}</td></tr>`).join("")}</tbody></table></div></div>
+  <div class="loan-mobile-list" id="loanMobileList">${loanRows.map(r=>`<article class="loan-mobile-card" data-search="${r.search}" data-status="${r.st}"><div class="loan-mobile-head"><div><b>${esc(r.l.id)}</b><span>${esc(r.l.khataNo||r.l.legacyKhataNo||"-")}</span></div><span class="badge ${r.badge}">${r.st}</span></div><div class="loan-mobile-customer"><b>${esc(customerName(r.cu||{}))}</b><span>${esc(r.cu?.mobile||"")}</span></div><div class="loan-mobile-grid"><div><small>Against</small><b>${esc(r.l.loanAgainst||"-")}</b></div><div><small>Amount</small><b>${money(r.l.amount)}</b></div><div><small>Rate</small><b>${esc(String(r.l.interestRate||0))}%</b></div><div><small>EMI</small><b>${esc(String(r.l.emiOption||"YES"))}</b></div><div><small>Start</small><b>${fmtDate(r.l.startDate)}</b></div><div><small>Remaining</small><b>${money(r.rem)}</b></div></div><div class="loan-mobile-action">${r.action}</div></article>`).join("")}</div>${pagination}`;
+}
+
+async function changeLoanPage(page){
+  const p=Math.max(1,Math.min(loanPageState.totalPages,Number(page)||1));
+  try{await loadLoansPage(p,loanPageState.search,loanPageState.status);window.scrollTo({top:0,behavior:"smooth"});}
+  catch(e){console.error(e);const body=document.getElementById("loansApiBody");if(body)body.innerHTML=`<div class="empty"><div class="emoji">⚠</div><h3>Could not load loans</h3><p>${esc(e.message||'Request failed')}</p><button class="btn" onclick="changeLoanPage(${loanPageState.page})">Retry</button></div>`;}
+}
+
+async function loanAction(select,id){
+  const action=select.value;select.value="";if(!action)return;
+  try{
+    if(action==="view"){await viewLoan(id);return;}
+    await ensureServerDataLoaded();
+    switch(action){case "edit":openEditLoan(id);break;case "schedule":showSchedule(id);break;case "history":openPaymentHistory(null,id);break;case "payment":openPaymentFor(id);break;case "delete":confirmDeleteRecord("loan",id);break;}
+  }catch(e){console.error(e);toast(e.message||"Could not load loan data","err");}
+}
+async function viewLoan(id){
+  const loanId=String(id);
+  openModal("Loan Details",`<div class="empty"><div class="emoji">⏳</div><h3>Loading loan details...</h3><p>Fetching only this loan's customer, payments and schedule.</p></div>`,`<button class="btn" onclick="closeModal()">Close</button>`);
+  try{
+    const x=await apiJSON(`/api/loans/${encodeURIComponent(loanId)}`);
+    const l=x.loan;
+    if(!l)throw new Error("Loan not found");
+    const cu=x.customer||{};
+    const summary=x.summary||{};
+    const status=String(summary.status||"ACTIVE").toUpperCase();
+    const body=`<div class="kpi-row"><div class="kpi"><b>${esc(customerName(cu))}</b><span>Customer</span></div><div class="kpi"><b>${esc(l.khataNo||"-")}</b><span>Khata No</span></div><div class="kpi"><b>${money(l.amount)}</b><span>Original Amount</span></div><div class="kpi"><b>${money(summary.outstanding||0)}</b><span>Outstanding</span></div></div><div class="loan-detail-summary"><div class="box"><b>Loan Date</b>${fmtDate(l.startDate)}</div><div class="box"><b>Type</b>${esc(l.loanType||"-")}</div><div class="box"><b>Against</b>${esc(l.loanAgainst||"-")}</div><div class="box"><b>Interest</b>${esc(String(l.interestRate||0))}%</div><div class="box"><b>EMI</b>${esc(String(l.emiOption||"YES"))}</div><div class="box"><b>Status</b><span class="badge ${status==='ACTIVE'?'green':status==='CLOSED'?'blue':'red'}">${esc(status)}</span></div></div><div class="notice" style="margin-top:16px">Paid principal: <b>${money(summary.paidPrincipal||0)}</b> · Total collected: <b>${money(summary.totalPaid||0)}</b> · Next due: <b>${summary.nextDue?fmtDate(summary.nextDue):"None"}</b></div>`;
+    openModal(`Loan Details — ${esc(l.id)}`,body,`<button class="btn" onclick="closeModal();showSchedule('${esc(l.id)}')">Schedule</button><button class="btn" onclick="closeModal();openPaymentHistory(null,'${esc(l.id)}')">Payment History</button><button class="btn primary" onclick="closeModal();openEditLoan('${esc(l.id)}')">✏ Edit Loan</button><button class="btn" onclick="closeModal();openPaymentFor('${esc(l.id)}')">＋ Add Payment</button><button class="btn" onclick="closeModal()">Close</button>`);
+    window.__loanDetailCache={id:loanId,loan:l,customer:cu,payments:Array.isArray(x.payments)?x.payments:[],schedules:Array.isArray(x.schedules)?x.schedules:[],summary};
+  }catch(e){console.error(e);openModal("Loan Details",`<div class="empty"><div class="emoji">⚠</div><h3>Could not load loan</h3><p>${esc(e.message||"Request failed")}</p></div>`,`<button class="btn" onclick="closeModal()">Close</button>`);}
 }
 function openEditLoan(id){
   const l=db.loans.find(x=>String(x.id)===String(id)); if(!l){toast("Loan not found.","err");return;}

@@ -39,6 +39,16 @@ async function renderPage(page){
     return;
   }
 
+  if(page==='loans'){
+    try{
+      await renderLoans(c);
+    }catch(e){
+      console.error(e);
+      c.innerHTML=header("Loans","Could not load loans.",`<button class="btn" onclick="renderPage('loans')">↻ Retry</button>`)+`<div class="empty"><div class="emoji">⚠</div><h3>Loans unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;
+    }
+    return;
+  }
+
   await ensureServerDataLoaded();
   normalizeMonthlyDueDates();
   const generated=ensureLegacyOperationalSchedules(todayISO());
