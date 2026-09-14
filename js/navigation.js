@@ -59,6 +59,19 @@ async function renderPage(page){
     return;
   }
 
+  // Collections list pages use targeted APIs and must not load the complete
+  // JSONB database merely to display Today's Collection or Pending Payments.
+  // Payment-entry actions will lazy-load the full data only when required.
+  if(page==='today' || page==='pending'){
+    try{
+      await (page==='today' ? renderToday(c) : renderPending(c));
+    }catch(e){
+      console.error(e);
+      c.innerHTML=header(page==='today'?"Today's Collection":"Pending Payments","Could not load collection data.",`<button class="btn" onclick="renderPage('${page}')">↻ Retry</button>`)+`<div class="empty"><div class="emoji">⚠</div><h3>Collections unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;
+    }
+    return;
+  }
+
   await ensureServerDataLoaded();
   normalizeMonthlyDueDates();
   const generated=ensureLegacyOperationalSchedules(todayISO());
