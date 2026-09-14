@@ -1,24 +1,101 @@
 // Customer registration, search, profile and customer actions.
-function renderCustomers(c){
-  const rows=activeCustomers();
-  c.innerHTML=header("Customers","Active customer profiles and their loans. Expired/deceased customers are kept separately.",`<button class="btn primary" onclick="openPage('registration')">+ New Customer</button>`);
-  const pendingFilter=String(window.pendingFilter||'').trim().toLowerCase();
-  const displayRows=pendingFilter?rows.filter(s=>{const l=db.loans.find(x=>x.id===s.loanId),cu=l&&db.customers.find(x=>x.id===l.customerId),khata=l?.legacyKhataNo||l?.id||'-',st=effectiveScheduleStatus(s,selected);return (customerName(cu||{})+' '+(cu?.mobile||'')+' '+khata+' '+st).toLowerCase().includes(pendingFilter)}):rows;
-  const customerRows=rows.map(cu=>{
-    const ls=db.loans.filter(l=>l.customerId===cu.id), rem=ls.reduce((a,l)=>a+loanOutstanding(l),0), total=ls.reduce((a,l)=>a+Number(l.amount),0), black=db.blacklist.some(b=>b.customerId===cu.id), expired=isExpiredCustomer(cu.id);
-    const customerStatus=black?"BLACKLISTED":expired?"EXPIRED":(ls.length>0 && ls.every(l=>loanOutstanding(l)<=0.005)?"COMPLETED":"ACTIVE");
-    const badgeClass=customerStatus==="BLACKLISTED"||customerStatus==="EXPIRED"?"red":customerStatus==="COMPLETED"?"blue":"green";
-    const city=cu.city||cu.village||"-";
-    const search=esc((cu.id+" "+customerName(cu)+" "+cu.mobile+" "+city+" "+cu.district+" "+cu.address+" "+customerStatus).toLowerCase());
-    const action=`<select class="action-select" aria-label="Actions for ${esc(customerName(cu))}" onchange="customerAction(this,'${cu.id}')"><option value="">Actions</option><option value="view">View</option><option value="edit">Edit</option><option value="loan">New Loan</option><option value="blacklist">${black?"Remove Blacklist":"Blacklist"}</option><option value="expired">Mark Expired / Dead</option><option value="delete" ${currentUser?.role==='Administrator' ? '' : 'disabled'}>Delete (Administrator only)</option></select>`;
-    return {cu,ls,rem,total,customerStatus,badgeClass,city,search,action};
+let customerPageState={page:1,limit:50,search:"",loading:false,total:0,totalPages:1};
+let customerSearchTimer=null;
+
+async function loadCustomersPage(page=customerPageState.page, search=customerPageState.search){
+  const c=document.getElementById("content");
+  if(!c) return;
+  customerPageState.loading=true;
+  customerPageState.page=Math.max(1,Number(page)||1);
+  customerPageState.search=String(search||"").trim();
+
+  const params=new URLSearchParams({
+    page:String(customerPageState.page),
+    limit:String(customerPageState.limit),
+    search:customerPageState.search,
+    sort:"name",
+    order:"asc"
   });
-  c.innerHTML+=`<div class="card section-card customer-page-card">
-    <div class="toolbar"><input class="grow" id="customerFilter" placeholder="Search name, mobile or customer ID..." oninput="filterTable('customerTable',this.value)"><a class="btn" href="#" onclick="openPage('expiredPeople');return false">⚫ Expired People</a></div>
-    <div class="customer-desktop-list"><div class="table-wrap"><table class="data-table customer-table" id="customerTable"><thead><tr><th>ID</th><th>Name</th><th>Mobile</th><th>Address</th><th>City</th><th>District</th><th>Loans</th><th>Total Loan</th><th>Remaining</th><th>Status</th><th class="customer-actions-head">Actions</th></tr></thead><tbody>${customerRows.map(r=>`<tr data-search="${r.search}"><td>${r.cu.id}</td><td><b>${esc(customerName(r.cu))}</b></td><td>${esc(r.cu.mobile)}</td><td>${esc(r.cu.address||"-")}</td><td>${esc(r.city)}</td><td>${esc(r.cu.district||"-")}</td><td>${r.ls.length}</td><td>${money(r.total)}</td><td>${money(r.rem)}</td><td><span class="badge ${r.badgeClass}">${r.customerStatus}</span></td><td class="customer-actions-cell">${r.action}</td></tr>`).join("")}</tbody></table></div></div>
-    <div class="customer-mobile-list" id="customerMobileList">${customerRows.map(r=>`<article class="customer-mobile-card" data-search="${r.search}"><div class="customer-mobile-head"><div><b>${esc(customerName(r.cu))}</b><span>${esc(r.cu.id)} · ${esc(r.cu.mobile)}</span></div><span class="badge ${r.badgeClass}">${r.customerStatus}</span></div><div class="customer-mobile-address">${esc(r.cu.address||"-")}, ${esc(r.city)} · ${esc(r.cu.district||"-")}</div><div class="customer-mobile-stats"><div><small>Loans</small><b>${r.ls.length}</b></div><div><small>Total Loan</small><b>${money(r.total)}</b></div><div><small>Remaining</small><b>${money(r.rem)}</b></div></div><div class="customer-mobile-action">${r.action}</div></article>`).join("")}</div>
-    ${rows.length?"":"<div class='empty'><div class='emoji'>👥</div><h3>No active customers</h3><p>Expired/deceased customers are available under Expired People.</p></div>"}
+
+  const x=await apiJSON(`/api/customers?${params.toString()}`);
+  const pagination=x.pagination||{};
+  customerPageState.page=Number(pagination.page||1);
+  customerPageState.total=Number(pagination.total||0);
+  customerPageState.totalPages=Number(pagination.totalPages||1);
+  customerPageState.loading=false;
+  renderCustomersFromApi(c,Array.isArray(x.customers)?x.customers:[]);
+}
+
+async function renderCustomers(c){
+  customerSearchTimer=null;
+  c.innerHTML=header("Customers","Active customer profiles and their loans. Expired/deceased customers are kept separately.",`<button class="btn primary" onclick="openPage('registration')">+ New Customer</button>`)+`
+    <div class="card section-card customer-page-card">
+      <div class="toolbar">
+        <input class="grow" id="customerFilter" value="${esc(customerPageState.search)}" placeholder="Search name, mobile, customer ID, loan ID or Khata No..." oninput="customerSearchChanged(this.value)">
+        <a class="btn" href="#" onclick="openPage('expiredPeople');return false">⚫ Expired People</a>
+      </div>
+      <div id="customersApiBody"><div class="empty"><div class="emoji">⏳</div><h3>Loading customers...</h3></div></div>
+    </div>`;
+  await loadCustomersPage(customerPageState.page,customerPageState.search);
+}
+
+function customerSearchChanged(value){
+  customerPageState.search=String(value||"").trim();
+  customerPageState.page=1;
+  clearTimeout(customerSearchTimer);
+  customerSearchTimer=setTimeout(()=>{
+    loadCustomersPage(1,customerPageState.search).catch(e=>{
+      console.error(e);
+      const body=document.getElementById("customersApiBody");
+      if(body) body.innerHTML=`<div class="empty"><div class="emoji">⚠</div><h3>Could not search customers</h3><p>${esc(e.message||'Request failed')}</p></div>`;
+    });
+  },300);
+}
+
+function renderCustomersFromApi(c,rows){
+  const body=document.getElementById("customersApiBody");
+  if(!body) return;
+  const total=customerPageState.total;
+  const totalPages=customerPageState.totalPages;
+  const current=customerPageState.page;
+
+  const customerRows=rows.map(cu=>{
+    const customerStatus=String(cu.status||"ACTIVE");
+    const badgeClass=customerStatus==="BLACKLISTED"?"red":customerStatus==="COMPLETED"?"blue":"green";
+    const city=cu.city||cu.village||"-";
+    const action=`<select class="action-select" aria-label="Actions for ${esc(customerName(cu))}" onchange="customerAction(this,'${esc(String(cu.id))}')"><option value="">Actions</option><option value="view">View</option><option value="edit">Edit</option><option value="loan">New Loan</option><option value="blacklist">${customerStatus==="BLACKLISTED"?"Remove Blacklist":"Blacklist"}</option><option value="expired">Mark Expired / Dead</option><option value="delete" ${currentUser?.role==='Administrator' ? '' : 'disabled'}>Delete (Administrator only)</option></select>`;
+    const search=esc((cu.id+" "+customerName(cu)+" "+cu.mobile+" "+city+" "+cu.district+" "+(cu.address||"")+" "+customerStatus).toLowerCase());
+    return {cu,customerStatus,badgeClass,city,action,search};
+  });
+
+  if(!customerRows.length){
+    body.innerHTML=`<div class="empty"><div class="emoji">👥</div><h3>${customerPageState.search?"No customers found":"No active customers"}</h3><p>${customerPageState.search?"Try a different name, mobile, customer ID, loan ID or Khata No.":"Expired/deceased customers are available under Expired People."}</p></div>`;
+    return;
+  }
+
+  const pagination=`<div class="toolbar" style="justify-content:space-between;align-items:center;margin-top:16px">
+    <span class="muted">Showing ${((current-1)*customerPageState.limit)+1}-${Math.min(current*customerPageState.limit,total)} of ${total} customers</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn" ${current<=1?'disabled':''} onclick="changeCustomerPage(${current-1})">← Previous</button>
+      <span class="muted">Page ${current} of ${totalPages}</span>
+      <button class="btn" ${current>=totalPages?'disabled':''} onclick="changeCustomerPage(${current+1})">Next →</button>
+    </div>
   </div>`;
+
+  body.innerHTML=`<div class="customer-desktop-list"><div class="table-wrap"><table class="data-table customer-table" id="customerTable"><thead><tr><th>ID</th><th>Name</th><th>Mobile</th><th>Address</th><th>City</th><th>District</th><th>Loans</th><th>Total Loan</th><th>Remaining</th><th>Status</th><th class="customer-actions-head">Actions</th></tr></thead><tbody>${customerRows.map(r=>`<tr data-search="${r.search}"><td>${esc(r.cu.id)}</td><td><b>${esc(customerName(r.cu))}</b></td><td>${esc(r.cu.mobile||"")}</td><td>${esc(r.cu.address||"-")}</td><td>${esc(r.city)}</td><td>${esc(r.cu.district||"-")}</td><td>${Number(r.cu.loanCount||0)}</td><td>${money(r.cu.totalLoan||0)}</td><td>${money(r.cu.remaining||0)}</td><td><span class="badge ${r.badgeClass}">${esc(r.customerStatus)}</span></td><td class="customer-actions-cell">${r.action}</td></tr>`).join("")}</tbody></table></div></div>
+  <div class="customer-mobile-list" id="customerMobileList">${customerRows.map(r=>`<article class="customer-mobile-card" data-search="${r.search}"><div class="customer-mobile-head"><div><b>${esc(customerName(r.cu))}</b><span>${esc(r.cu.id)} · ${esc(r.cu.mobile||"")}</span></div><span class="badge ${r.badgeClass}">${esc(r.customerStatus)}</span></div><div class="customer-mobile-address">${esc(r.cu.address||"-")}, ${esc(r.city)} · ${esc(r.cu.district||"-")}</div><div class="customer-mobile-stats"><div><small>Loans</small><b>${Number(r.cu.loanCount||0)}</b></div><div><small>Total Loan</small><b>${money(r.cu.totalLoan||0)}</b></div><div><small>Remaining</small><b>${money(r.cu.remaining||0)}</b></div></div><div class="customer-mobile-action">${r.action}</div></article>`).join("")}</div>${pagination}`;
+}
+
+async function changeCustomerPage(page){
+  const p=Math.max(1,Math.min(customerPageState.totalPages,Number(page)||1));
+  try{
+    await loadCustomersPage(p,customerPageState.search);
+    window.scrollTo({top:0,behavior:'smooth'});
+  }catch(e){
+    console.error(e);
+    const body=document.getElementById("customersApiBody");
+    if(body) body.innerHTML=`<div class="empty"><div class="emoji">⚠</div><h3>Could not load customers</h3><p>${esc(e.message||'Request failed')}</p><button class="btn" onclick="changeCustomerPage(${customerPageState.page})">Retry</button></div>`;
+  }
 }
 
 function filterTable(id,q){
@@ -27,7 +104,20 @@ function filterTable(id,q){
   document.querySelectorAll("#"+id+" tbody tr").forEach(r=>{r.style.display=((r.dataset.search||"").includes(q)&&(status===""||r.dataset.search.includes(status.toLowerCase())))?"":"none"});
   document.querySelectorAll("#customerMobileList .customer-mobile-card").forEach(r=>{r.style.display=((r.dataset.search||"").includes(q)&&(status===""||r.dataset.search.includes(status.toLowerCase())))?"":"none"});
 }
-function customerAction(select,id){const action=select.value;select.value="";if(!action)return;switch(action){case "view":viewCustomer(id);break;case "edit":openEditCustomer(id);break;case "loan":newLoan(id);break;case "blacklist":{const black=db.blacklist.some(b=>String(b.customerId)===String(id));black?unblacklist(id):openBlacklistForm(id);break;}case "expired":openExpiredCustomerForm(id);break;case "delete":confirmDeleteRecord("customer",id);break;}}
+async function customerAction(select,id){
+  const action=select.value;select.value="";if(!action)return;
+  try{
+    await ensureServerDataLoaded();
+    switch(action){
+      case "view":viewCustomer(id);break;
+      case "edit":openEditCustomer(id);break;
+      case "loan":newLoan(id);break;
+      case "blacklist":{const black=db.blacklist.some(b=>String(b.customerId)===String(id));black?unblacklist(id):openBlacklistForm(id);break;}
+      case "expired":openExpiredCustomerForm(id);break;
+      case "delete":confirmDeleteRecord("customer",id);break;
+    }
+  }catch(e){console.error(e);toast(e.message||"Could not load customer data","err");}
+}
 
 function renderRegistration(c){
   c.innerHTML=header("New Registration","Maharashtra customer profile. Customer ID is generated automatically.");

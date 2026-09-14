@@ -24,6 +24,21 @@ async function renderPage(page){
     }
     return;
   }
+
+  // Customers is intentionally loaded from the paginated customer API.
+  // Do not call /api/db here: the full business database must not be loaded
+  // merely to open the Customers page. Customer actions can load full data
+  // on demand when an existing legacy workflow needs it.
+  if(page==='customers'){
+    try{
+      await renderCustomers(c);
+    }catch(e){
+      console.error(e);
+      c.innerHTML=header("Customers","Could not load customers.",`<button class="btn" onclick="renderPage('customers')">↻ Retry</button>`)+`<div class="empty"><div class="emoji">⚠</div><h3>Customers unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;
+    }
+    return;
+  }
+
   await ensureServerDataLoaded();
   normalizeMonthlyDueDates();
   const generated=ensureLegacyOperationalSchedules(todayISO());
