@@ -1,14 +1,8 @@
 // Today collection and pending payment features.
 let todayCollectionState={loading:false,search:"",requestKey:"",request:null,cache:new Map()};
 let todayCollectionSearchTimer=null;
-function normalizeTodaySearch(value){
-  if(value && typeof value === "object" && "value" in value) return String(value.value || "");
-  return String(value || "");
-}
 async function loadTodayCollection(c,date=todayISO(),search=todayCollectionState.search){
-  search=normalizeTodaySearch(search);
-  todayCollectionState.search=search;
-  const key=`${date}|${search.trim().toLowerCase()}`;
+  const key=`${date}|${String(search||'').trim().toLowerCase()}`;
   todayCollectionState.loading=true;
   if(todayCollectionState.requestKey===key && todayCollectionState.request) return todayCollectionState.request;
   const cached=todayCollectionState.cache.get(key);
@@ -21,9 +15,7 @@ async function loadTodayCollection(c,date=todayISO(),search=todayCollectionState
 }
 function renderToday(c){
   const selected=window.todayCollectionDate||todayISO();
-  const search=normalizeTodaySearch(window.todayFilter);
-  window.todayFilter=search;
-  todayCollectionState.search=search;
+  const search=String(window.todayFilter||'');
   c.innerHTML=header("Today's Collection",`Selected date: ${fmtDate(selected)}`,`<button class="btn" onclick="printTodayCollection('${selected}')">🖨 Print</button>`)+`<div class="card section-card"><div class="toolbar"><label style="font-weight:700">Collection Date</label><input id="todayDatePicker" type="date" value="${selected}" onchange="window.todayCollectionDate=this.value;openPage('today')"><button class="btn" onclick="window.todayCollectionDate=todayISO();openPage('today')">Today</button><button class="btn" onclick="shiftTodayDate(-1)">← Previous Day</button><button class="btn" onclick="shiftTodayDate(1)">Next Day →</button><input class="grow" id="todayFilter" placeholder="Search customer, mobile, Khata or loan ID..." value="${esc(search)}" oninput="refreshTodaySearch(this.value)"></div></div><div id="todayCollectionApiBody"><div class="empty">Loading collection...</div></div>`;
   loadTodayCollection(c,selected,search).catch(e=>{console.error(e);document.getElementById('todayCollectionApiBody').innerHTML=`<div class="empty"><div class="emoji">⚠</div><h3>Collection unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;});
 }
@@ -33,6 +25,10 @@ function renderTodayFromApi(c,x){
   body.innerHTML=`<div class="stat-grid" style="margin-top:16px">${stat("Expected",money(summary.expected||0),"Unpaid EMIs due on selected date")}${stat("Collected",money(summary.collected||0),"Payments received on selected date")}${stat("Interest",money(summary.interest||0),"Interest received")}${stat("Pending",money(summary.pending||0),"Unpaid amount for selected date")}</div><div class="card section-card today-collection-card" style="margin-top:18px"><div class="today-collection-head"><h3>Collection Entries — ${fmtDate(selected)}</h3><span class="today-entry-count">${rows.length} ${rows.length===1?'entry':'entries'}</span></div><div class="today-collection-desktop table-wrap"><table class="data-table" id="todayTable"><thead><tr><th>Sr No</th><th>Khata No</th><th>Name</th><th>Mobile</th><th>Loan Date</th><th>Loan Rs.</th><th>Remaining</th><th>Pay Amount</th><th>Paid Today</th><th>Remark</th><th>Action</th></tr></thead><tbody>${rows.map((r,i)=>{const l=r.loan||{},cu=r.customer||{},s=r.s||r.schedules?.[0]||{};const khata=l.legacyKhataNo||l.khataNo||l.id||'-';const remark=r.fullyPaidToday?'Paid':(Number(r.paidOnDate||0)>0?'Partial / Paid':'Due Today');const remaining=Math.max(0,Number(l.amount||0)-Number(l.paidPrincipal||0));return `<tr data-search="${esc((khata+' '+l.id+' '+customerName(cu)+' '+(cu.mobile||'')).toLowerCase())}"><td>${i+1}</td><td><b>${esc(khata)}</b></td><td><b>${esc(customerName(cu)||cu.name||'-')}</b></td><td>${esc(cu.mobile||'-')}</td><td>${fmtDate(l.startDate)}</td><td>${money(l.amount)}</td><td><b>${money(remaining)}</b></td><td><b>${money(r.due||0)}</b></td><td>${money(r.paidOnDate||0)}</td><td><span class="badge ${r.fullyPaidToday?'green':'amber'}">${remark}</span></td><td>${(r.fullyPaidToday||Number(r.due||0)<=0.005)?'<button class="btn small" disabled>Paid</button>':`<div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap"><button class="btn small primary" onclick="openPaymentFor('${l.id}','${s.id}')">Payment</button><button class="btn small" onclick="addToPending('${s.id}')">Add to Pending</button></div>`}</td></tr>`}).join('')}</tbody></table></div><div class="today-collection-mobile" id="todayMobileList">${rows.map((r,i)=>{const l=r.loan||{},cu=r.customer||{},s=r.s||r.schedules?.[0]||{};const khata=l.legacyKhataNo||l.khataNo||l.id||'-';const remark=r.fullyPaidToday?'Paid':(Number(r.paidOnDate||0)>0?'Partial / Paid':'Due Today');return `<article class="today-mobile-card"><div class="today-mobile-head"><div><span class="today-mobile-index">${i+1}</span><div><b>${esc(customerName(cu)||cu.name||'-')}</b><small>${esc(khata)} · ${esc(cu.mobile||'-')}</small></div></div><span class="badge ${r.fullyPaidToday?'green':'amber'}">${remark}</span></div><div class="today-mobile-grid"><div><small>Loan Date</small><b>${fmtDate(l.startDate)}</b></div><div><small>Loan Amount</small><b>${money(l.amount)}</b></div><div><small>Remaining</small><b>${money(Math.max(0,Number(l.amount||0)-Number(l.paidPrincipal||0)))}</b></div><div><small>Pay Amount</small><b>${money(r.due||0)}</b></div><div><small>Paid Today</small><b>${money(r.paidOnDate||0)}</b></div></div>${(r.fullyPaidToday||Number(r.due||0)<=0.005)?'<button class="btn small today-paid-btn" disabled>✓ Paid</button>':`<div class="today-mobile-actions"><button class="btn primary" onclick="openPaymentFor('${l.id}','${s.id}')">Payment</button><button class="btn" onclick="addToPending('${s.id}')">Add to Pending</button></div>`}</article>`}).join('')}${rows.length?'':`<div class='empty'><div class='emoji'>📅</div><h3>No collection entries for ${fmtDate(selected)}</h3><p>Due, partially paid, and fully paid installments for the selected date will appear here for reference.</p></div>`}</div></div>`;
 }
 async function addToPending(scheduleId){
+  // Today's Collection is API-backed, so the in-memory database may not have
+  // been hydrated when this action is clicked. Always load the authoritative
+  // normalized data before resolving the schedule ID.
+  await ensureServerDataLoaded();
   const s=db.schedules.find(x=>String(x.id)===String(scheduleId));
   if(!s){toast("Installment not found.","err");return;}
   if(effectiveDueAmount(s)<=0.005){toast("This installment is already paid.","err");return;}
@@ -51,10 +47,8 @@ async function addToPending(scheduleId){
   openPage("today");
 }
 function refreshTodaySearch(value){
-  const normalized=normalizeTodaySearch(value);
-  window.todayFilter=normalized;
-  todayCollectionState.search=normalized;
-  const q=normalized.trim().toLowerCase();
+  window.todayFilter=String(value||'');
+  const q=window.todayFilter.trim().toLowerCase();
   document.querySelectorAll('#todayTable tbody tr[data-search], #todayMobileList .today-mobile-card[data-search]').forEach(el=>{
     el.style.display=!q || String(el.dataset.search||'').includes(q)?'':'none';
   });
