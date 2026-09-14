@@ -172,7 +172,43 @@ async function clearAllData(){
     toast(e.message||"Could not clear data","err");
   }
 }
-async function restoreBackup(){if(currentUser?.role!=="Administrator"){toast("Only Administrators can restore backups.","err");return;}const f=document.getElementById("restoreFile").files[0];if(!f)return toast("Select a JSON backup file.","err");const r=new FileReader();r.onload=async()=>{try{const payload=JSON.parse(r.result);const x=payload?.sharedData||payload;if(!x||!Array.isArray(x.customers)||!Array.isArray(x.loans)||!Array.isArray(x.schedules)||!Array.isArray(x.payments)||!Array.isArray(x.blacklist))throw new Error("structure");const previous=db;db=x;const issues=validateDatabaseIntegrity();if(issues.length){db=previous;toast(`Backup validation failed: ${issues[0]}`,"err");return;}db.settings={...(blankDB().settings||{}),...(x.settings||{})};await save();serverDataLoaded=true;toast("Backup validated and restored successfully");await openPage("dashboard")}catch(e){console.error("Restore backup failed:",e);toast(e.message&&e.message!=="structure"?e.message:"Invalid or incompatible backup file.","err")}};r.readAsText(f)}
+async function restoreBackup(){
+  if(currentUser?.role!=="Administrator"){toast("Only Administrators can restore backups.","err");return;}
+  const input=document.getElementById("restoreFile");
+  const button=document.querySelector('[onclick="restoreBackup()"]');
+  const f=input?.files?.[0];
+  if(!f)return toast("Select a JSON backup file.","err");
+  if(f.size>10*1024*1024)return toast("Backup file must be 10 MB or smaller.","err");
+  if(!confirm("Restore this backup? It will replace all current customers, loans, schedules, payments and related business data."))return;
+
+  if(button){button.disabled=true;button.dataset.originalText=button.textContent;button.textContent="Restoring…";}
+  try{
+    const text=await f.text();
+    let payload;
+    try{payload=JSON.parse(text);}catch{throw new Error("Invalid JSON backup file.");}
+    const x=payload?.sharedData||payload;
+    if(!x||!Array.isArray(x.customers)||!Array.isArray(x.loans)||!Array.isArray(x.schedules)||!Array.isArray(x.payments)||!Array.isArray(x.blacklist)){
+      throw new Error("Invalid or incompatible backup file.");
+    }
+
+    const result=await apiJSON('/api/backup/restore',{
+      method:'POST',
+      body:JSON.stringify({sharedData:x})
+    });
+
+    db={...blankDB(),...x,settings:{...blankDB().settings,...(x.settings||{})}};
+    db.expiredCustomers=Array.isArray(db.expiredCustomers)?db.expiredCustomers:[];
+    serverSnapshot=cloneData(db);
+    serverDataLoaded=true;
+    toast(`Backup restored successfully: ${Number(result?.restored?.customers||db.customers.length).toLocaleString('en-IN')} customers`);
+    await openPage("dashboard");
+  }catch(e){
+    console.error("Restore backup failed:",e);
+    toast(e.message||"Could not restore backup.","err");
+  }finally{
+    if(button){button.disabled=false;button.textContent=button.dataset.originalText||"Restore JSON Backup";}
+  }
+}
 
 function runDataValidation(){const issues=validateDatabaseIntegrity();const el=document.getElementById("validationResult");if(!el)return;if(issues.length){el.innerHTML=`<span class="badge red">${issues.length} issue(s)</span> ${esc(issues.slice(0,3).join(" | "))}`;toast(`Validation found ${issues.length} issue(s). See Backup / Export.`,"err");}else{el.innerHTML='<span class="badge green">✓ Data is valid</span>';toast("Data validation passed");}}
 
