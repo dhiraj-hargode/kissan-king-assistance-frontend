@@ -3,7 +3,8 @@ function renderPayment(c){
   c.innerHTML=header("Payment Entry","Search a loan and record a payment.",`<button class="btn" onclick="openPage('history')">🧾 Payment History</button>`);
   c.innerHTML+=`<div class="card section-card"><div class="toolbar"><input class="grow" id="paymentSearch" placeholder="Enter Loan ID, Khata No, Customer ID, name or mobile..." oninput="searchPaymentLoans(this.value)"></div><div id="paymentResults" class="empty"><div class="emoji">💳</div><h3>Select a loan</h3><p>Search above to begin a payment.</p></div></div>`;
 }
-function searchPaymentLoans(q){
+async function searchPaymentLoans(q){
+  await ensureServerDataLoaded();
   q=q.toLowerCase().trim();const r=document.getElementById("paymentResults");if(!q){r.className="empty";r.innerHTML="<div class='emoji'>💳</div><h3>Select a loan</h3>";return}
   const ls=activeLoans().filter(l=>{const c=db.customers.find(x=>x.id===l.customerId);return (l.id+" "+(l.khataNo||"")+" "+(l.legacyKhataNo||"")+" "+l.customerId+" "+customerName(c||{})+" "+(c?.mobile||"")).toLowerCase().includes(q)});
   r.className="payment-search-results";r.innerHTML=ls.length?`<div class="payment-results-desktop"><div class="table-wrap"><table class="data-table"><thead><tr><th>Loan</th><th>Khata</th><th>Customer</th><th>Mobile</th><th>Amount</th><th>Remaining</th><th>Next EMI</th><th>Action</th></tr></thead><tbody>${ls.map(l=>{const c=db.customers.find(x=>x.id===l.customerId),n=nextDue(l);return `<tr><td>${esc(l.id)}</td><td>${esc(l.khataNo||l.legacyKhataNo||"-")}</td><td>${esc(customerName(c||{}))}</td><td>${esc(c?.mobile||"-")}</td><td>${money(l.amount)}</td><td>${money(loanOutstanding(l))}</td><td>${n?fmtDate(n.dueDate):"Completed"}</td><td><button class="btn small primary" onclick="openPaymentFor('${l.id}')">Open Payment</button></td></tr>`}).join("")}</tbody></table></div></div><div class="payment-results-mobile">${ls.map((l,i)=>{const c=db.customers.find(x=>x.id===l.customerId),n=nextDue(l),out=loanOutstanding(l);return `<article class="payment-loan-card"><div class="payment-loan-head"><div class="payment-loan-title"><span class="payment-loan-index">${i+1}</span><div><b>${esc(customerName(c||{}))}</b><small>${esc(l.id)} · Khata ${esc(l.khataNo||l.legacyKhataNo||"-")}</small></div></div><span class="payment-loan-status">${out>0.005?"OPEN":"PAID"}</span></div><div class="payment-loan-contact"><span>📱 ${esc(c?.mobile||"-")}</span><span>📅 ${n?fmtDate(n.dueDate):"Completed"}</span></div><div class="payment-loan-grid"><div><small>Loan Amount</small><b>${money(l.amount)}</b></div><div><small>Outstanding</small><b>${money(out)}</b></div></div><button type="button" class="btn primary payment-loan-action" onclick="openPaymentFor('${l.id}')">💳 Open Payment</button></article>`}).join("")}</div>`:`<div class="empty"><div class="emoji">🔎</div><h3>No matching loan</h3><p>Try a loan ID, Khata number, customer name, ID or mobile.</p></div>`;
@@ -60,6 +61,7 @@ function calculatePaymentAmounts(loanId,scheduleId){
 }
 
 async function savePayment(loanId,scheduleId){
+  await ensureServerDataLoaded();
   const form=document.getElementById("payForm"); if(!form)return;
   const f=new FormData(form),o=Object.fromEntries(f.entries());
   const l=db.loans.find(x=>String(x.id)===String(loanId));
@@ -249,7 +251,8 @@ async function viewPayment(id){
   }catch(e){toast(e.message||"Could not load payment details","err");}
 }
 
-function renderSchedule(c){
+async function renderSchedule(c){
+  await ensureServerDataLoaded();
   c.innerHTML=header("Repayment Schedule","Search by loan ID, customer ID or customer name.");
   c.innerHTML+=`<div class="card section-card"><div class="toolbar"><input class="grow" id="scheduleSearch" placeholder="Search loan/customer..." oninput="searchSchedule(this.value)"></div><div id="scheduleArea" class="empty"><div class="emoji">📋</div><h3>Select a loan</h3></div></div>`;
   if(selectedLoanId){const l=db.loans.find(x=>String(x.id)===String(selectedLoanId));if(l){document.getElementById("scheduleSearch").value=l.id;searchSchedule(l.id)}}
@@ -345,7 +348,8 @@ function renderSelectedSchedule(loan){
   area.className='';
   area.innerHTML=`<div class="kpi-row"><div class="kpi"><b>${esc(customerName(cu||{}))}</b><span>Customer</span></div><div class="kpi"><b>${money(loan.amount)}</b><span>Loan Amount</span></div><div class="kpi"><b>${loan.interestRate}%</b><span>Monthly Interest</span></div><div class="kpi"><b>${money(totalInterest)}</b><span>Total Interest</span></div></div>${closed?`<div class="notice" style="margin:12px 0">✓ Loan completed — schedule ends on the final payment. Future zero-value installments are not shown.</div>`:''}<div class="actions no-print" style="margin:15px 0"><button class="btn" onclick="window.print()">🖨 Print</button></div><div class="loan-schedule-desktop"><div class="table-wrap"><table class="data-table"><thead><tr><th>Sr No</th><th>Due Date</th><th>Principal</th><th>Interest</th><th>EMI</th><th>Paid</th><th>Penalty</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${rows.map(s=>`<tr><td>${s.installment}</td><td>${fmtDate(s.dueDate)}</td><td>${money(s.principal)}</td><td>${money(s.interest)}</td><td>${money(s.emi)}</td><td>${money(s.paid)}</td><td>${money(s.penalty)}</td><td><b>${money(s.remaining)}</b></td><td><span class="badge ${s.status==='PAID'?'green':s.status==='OVERDUE'?'red':s.status==='DUE TODAY'?'amber':'blue'}">${s.status}</span></td></tr>`).join('')}</tbody></table></div></div><div class="loan-schedule-mobile">${rows.map(s=>`<article class="schedule-mobile-card"><div class="schedule-mobile-head"><div><b>Installment ${s.installment}</b><span>Due ${fmtDate(s.dueDate)}</span></div><span class="badge ${s.status==='PAID'?'green':s.status==='OVERDUE'?'red':s.status==='DUE TODAY'?'amber':'blue'}">${s.status}</span></div><div class="schedule-mobile-grid"><div><small>Principal</small><b>${money(s.principal)}</b></div><div><small>Interest</small><b>${money(s.interest)}</b></div><div><small>EMI</small><b>${money(s.emi)}</b></div><div><small>Paid</small><b>${money(s.paid)}</b></div><div><small>Penalty</small><b>${money(s.penalty)}</b></div><div><small>Remaining</small><b>${money(s.remaining)}</b></div></div></article>`).join('')}</div>`;
 }
-function searchSchedule(q){
+async function searchSchedule(q){
+  await ensureServerDataLoaded();
   q=String(q||'').trim().toLowerCase();
   const area=document.getElementById('scheduleArea');
   if(!area)return;

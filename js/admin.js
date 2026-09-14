@@ -17,7 +17,8 @@ function renderBlacklistRows(c,x){const state=window.blacklistPageState; const r
 function blacklistSearchChanged(v){clearTimeout(window.blacklistSearchTimer);window.blacklistSearchTimer=setTimeout(()=>loadBlacklistPage(1,v),300)}
 function changeBlacklistPage(page){return loadBlacklistPage(page,window.blacklistPageState?.search||'')}
 
-function openBlacklistForm(id){
+async function openBlacklistForm(id){
+  await ensureServerDataLoaded();
   const cu=db.customers.find(c=>String(c.id)===String(id)); if(!cu)return;
   if(db.blacklist.some(b=>String(b.customerId)===String(id))){toast("Customer is already blacklisted.","err");return;}
   const loans=db.loans.filter(l=>String(l.customerId)===String(id));
@@ -26,14 +27,15 @@ function openBlacklistForm(id){
   openModal("Blacklist Customer",`<div class="notice"><b>${esc(customerName(cu))}</b> · ${esc(cu.mobile||"-")}<br>Outstanding: <b>${money(outstanding)}</b> · Overdue installments: <b>${overdue}</b></div><form id="blacklistForm"><div class="form-grid"><div class="form-group span-2"><label>Reason *</label><select name="reason" required><option value="">Select reason</option><option>Repeated payment default</option><option>Long overdue</option><option>Refused to pay</option><option>Unreachable / absconded</option><option>Fraud / false information</option><option>Other</option></select></div><div class="form-group span-2"><label>Notes</label><textarea name="notes" placeholder="Add details about why this customer is blacklisted..."></textarea></div></div></form>`,`<button class="btn" onclick="closeModal()">Cancel</button><button class="btn danger" onclick="saveBlacklist('${id}')">🔴 Add to Blacklist</button>`);
 }
 async function saveBlacklist(id){
+  await ensureServerDataLoaded();
   const cu=db.customers.find(c=>String(c.id)===String(id)); const form=document.getElementById("blacklistForm"); if(!cu||!form)return;
   const reason=form.reason.value.trim(); if(!reason){toast("Please select a blacklist reason.","err");return;}
   if(db.blacklist.some(b=>String(b.customerId)===String(id))){toast("Customer is already blacklisted.","err");closeModal();return;}
   const loans=db.loans.filter(l=>String(l.customerId)===String(id));
   db.blacklist.push({id:uid("BL"),ownerId:getCurrentUser()?.id||"ADMIN",customerId:cu.id,reason,date:todayISO(),notes:form.notes.value.trim(),outstanding:loans.reduce((sum,l)=>sum+loanOutstanding(l),0),createdAt:new Date().toISOString()});
-  await save(); closeModal(); toast(`${customerName(cu)} added to blacklist`); await loadServerData(); openPage("customers");
+  await save(); closeModal(); toast(`${customerName(cu)} added to blacklist`); await loadServerData(); if(window.blacklistPageState) window.blacklistPageState._cache=new Map(); openPage("customers");
 }
-async function unblacklist(id){ if(!db.customers.some(c=>String(c.id)===String(id))){toast("Customer not found.","err");return;} db.blacklist=db.blacklist.filter(b=>String(b.customerId)!==String(id)); await save(); await loadServerData(); toast("Customer removed from blacklist"); openPage("blacklist") }
+async function unblacklist(id){ await ensureServerDataLoaded(); if(!db.customers.some(c=>String(c.id)===String(id))){toast("Customer not found.","err");return;} db.blacklist=db.blacklist.filter(b=>String(b.customerId)!==String(id)); await save(); await loadServerData(); if(window.blacklistPageState) window.blacklistPageState._cache=new Map(); toast("Customer removed from blacklist"); openPage("blacklist") }
 async function renderExpired(c){
   const state=window.overduePageState||{page:1,limit:50,search:'',total:0,totalPages:1}; window.overduePageState=state;
   c.innerHTML=header("Overdue Loans","Installments that have passed their due date. Move overdue installments to Collections for follow-up.",`<button class="btn primary" onclick="openPage('pending')">→ Collections</button>`)+`<div class="card section-card"><div class="toolbar"><input class="grow" id="overdueFilter" value="${esc(state.search)}" placeholder="Search customer, loan or Khata..." oninput="overdueSearchChanged(this.value)"></div><div id="overdueArea"><div class="empty">Loading overdue installments…</div></div></div>`;
@@ -48,7 +50,8 @@ async function loadOverduePage(page=1,search=window.overduePageState?.search||''
 function overdueSearchChanged(v){clearTimeout(window.overdueSearchTimer);window.overdueSearchTimer=setTimeout(()=>loadOverduePage(1,v),300)}
 function changeOverduePage(p){return loadOverduePage(p,window.overduePageState?.search||'')}
 
-function openExpiredCustomerForm(id){
+async function openExpiredCustomerForm(id){
+  await ensureServerDataLoaded();
   const cu=db.customers.find(c=>String(c.id)===String(id));
   if(!cu){toast("Customer not found.","err");return;}
   if(isExpiredCustomer(id)){toast("Customer is already in Expired People.","err");return;}
@@ -56,8 +59,10 @@ function openExpiredCustomerForm(id){
   const outstanding=loans.reduce((sum,l)=>sum+loanOutstanding(l),0);
   openModal("Mark Customer as Expired / Dead",`<div class="notice"><b>${esc(customerName(cu))}</b> · ${esc(cu.mobile||"-")}<br>Outstanding principal: <b>${money(outstanding)}</b><br><small>The customer will be removed from active Customers, Today's Collection, Pending Payments, reminders and new-loan selection. All loans and payment history will be preserved.</small></div><form id="expiredCustomerForm"><div class="form-grid"><div class="form-group"><label>Date of Death *</label><input type="date" name="date" value="${todayISO()}" required></div><div class="form-group"><label>Reason</label><input name="reason" value="Death" readonly></div><div class="form-group span-2"><label>Notes</label><textarea name="notes" placeholder="Add any details or reference..."></textarea></div></div></form>`,`<button class="btn" onclick="closeModal()">Cancel</button><button class="btn danger" onclick="saveExpiredCustomer('${esc(id)}')">⚫ Move to Expired People</button>`);
 }
-function saveExpiredCustomer(id){
-  const cu=db.customers.find(c=>String(c.id)===String(id)); const f=document.getElementById("expiredCustomerForm");
+async function saveExpiredCustomer(id){
+  await ensureServerDataLoaded();
+  const cu=db.customers.find(c=>String(c.id)===String(id));
+  const f=document.getElementById("expiredCustomerForm");
   if(!cu||!f)return;
   const date=f.date.value;
   if(!validISODate(date)){toast("Enter a valid date of death.","err");return;}
@@ -65,18 +70,40 @@ function saveExpiredCustomer(id){
   if(isExpiredCustomer(id)){toast("Customer is already expired.","err");return;}
   const loans=db.loans.filter(l=>String(l.customerId)===String(id));
   db.expiredCustomers.push({id:uid("EXP"),ownerId:getCurrentUser()?.id||"ADMIN",customerId:cu.id,date,reason:"Death",notes:cleanText(f.notes.value,1000),outstanding:loans.reduce((sum,l)=>sum+loanOutstanding(l),0),createdAt:new Date().toISOString(),createdBy:"admin"});
-  save(); closeModal(); toast(`${customerName(cu)} moved to Expired People`); openPage("expiredPeople");
+  await save();
+  await loadServerData();
+  if(window.expiredPeoplePageState) window.expiredPeoplePageState._cache=new Map();
+  closeModal();
+  toast(`${customerName(cu)} moved to Expired People`);
+  openPage("expiredPeople");
 }
-function restoreExpiredCustomer(id){
+async function restoreExpiredCustomer(id){
+  await ensureServerDataLoaded();
   if(!isExpiredCustomer(id)){toast("Customer is not in Expired People.","err");return;}
   if(!confirm("Restore this customer to the active customer list? Their loan and payment history will remain unchanged."))return;
   db.expiredCustomers=db.expiredCustomers.filter(x=>String(x.customerId)!==String(id));
-  save(); toast("Customer restored to active Customers"); renderPage("expiredPeople");
+  await save();
+  await loadServerData();
+  if(window.expiredPeoplePageState) window.expiredPeoplePageState._cache=new Map();
+  toast("Customer restored to active Customers");
+  openPage("expiredPeople");
 }
-function viewExpiredCustomer(id){
-  const cu=db.customers.find(c=>String(c.id)===String(id)); const ex=db.expiredCustomers.find(x=>String(x.customerId)===String(id));
-  if(!cu||!ex)return; const loans=db.loans.filter(l=>l.customerId===id);
-  openModal(`Expired Customer — ${esc(customerName(cu))}`,`<div class="kpi-row"><div class="kpi"><b>${esc(cu.id)}</b><span>Customer ID</span></div><div class="kpi"><b>${esc(cu.mobile||"-")}</b><span>Mobile</span></div><div class="kpi"><b>${money(loans.reduce((a,l)=>a+Number(l.amount),0))}</b><span>Total Loan</span></div><div class="kpi"><b>${money(loans.reduce((a,l)=>a+loanOutstanding(l),0))}</b><span>Outstanding</span></div></div><hr><p><b>Date of Death:</b> ${fmtDate(ex.date)}</p><p><b>Notes:</b> ${esc(ex.notes||"-")}</p><h3>Loans & History</h3>${loans.length?`<div class="table-wrap"><table class="data-table"><thead><tr><th>Loan</th><th>Khata</th><th>Amount</th><th>Remaining</th></tr></thead><tbody>${loans.map(l=>`<tr><td>${l.id}</td><td>${esc(l.khataNo||"-")}</td><td>${money(l.amount)}</td><td>${money(loanOutstanding(l))}</td></tr>`).join("")}</tbody></table></div>`:"<div class='empty'>No loans.</div>"}`,`<button class="btn" onclick="closeModal();openPaymentHistory('${id}')">🧾 Payment History</button><button class="btn" onclick="printCustomer('${id}')">🖨 Print</button><button class="btn success" onclick="restoreExpiredCustomer('${id}')">Restore to Customers</button><button class="btn" onclick="closeModal()">Close</button>`);
+async function viewExpiredCustomer(id){
+  try{
+    const x=await apiJSON(`/api/customers/${encodeURIComponent(id)}`);
+    const cu=x.customer;
+    const ex=x.expired || (Array.isArray(db.expiredCustomers)?db.expiredCustomers.find(r=>String(r.customerId)===String(id)):null);
+    if(!cu||!ex){toast("Expired customer not found.","err");return;}
+    const loans=Array.isArray(x.loans)?x.loans:[];
+    const payments=Array.isArray(x.payments)?x.payments:[];
+    const paidByLoan=new Map();
+    for(const p of payments){const lid=String(p.loanId||"");paidByLoan.set(lid,(paidByLoan.get(lid)||0)+Number(p.principal||0));}
+    const outstanding=l=>Math.max(0,Number(l.amount||0)-(paidByLoan.get(String(l.id))||0));
+    const totalLoan=loans.reduce((a,l)=>a+Number(l.amount||0),0);
+    const totalOutstanding=loans.reduce((a,l)=>a+outstanding(l),0);
+    const body=`<div class="kpi-row"><div class="kpi"><b>${esc(cu.id)}</b><span>Customer ID</span></div><div class="kpi"><b>${esc(cu.mobile||"-")}</b><span>Mobile</span></div><div class="kpi"><b>${money(totalLoan)}</b><span>Total Loan</span></div><div class="kpi"><b>${money(totalOutstanding)}</b><span>Outstanding</span></div></div><hr><p><b>Date of Death:</b> ${fmtDate(ex.date)}</p><p><b>Reason:</b> ${esc(ex.reason||"Death")}</p><p><b>Notes:</b> ${esc(ex.notes||"-")}</p><h3>Loans & History</h3>${loans.length?`<div class="table-wrap"><table class="data-table"><thead><tr><th>Loan</th><th>Khata</th><th>Amount</th><th>Paid Principal</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${loans.map(l=>{const rem=outstanding(l);return `<tr><td>${esc(l.id)}</td><td>${esc(l.khataNo||l.legacyKhataNo||"-")}</td><td>${money(l.amount)}</td><td>${money(Number(l.amount||0)-rem)}</td><td>${money(rem)}</td><td>${esc(rem>0?"ACTIVE":"COMPLETED")}</td></tr>`}).join("")}</tbody></table></div>`:"<div class='empty'>No loans.</div>"}`;
+    openModal(`Expired Customer — ${esc(customerName(cu))}`,body,`<button class="btn" onclick="closeModal();openPaymentHistory('${esc(id)}')">🧾 Payment History</button><button class="btn" onclick="closeModal();loadAndPrintCustomer('${esc(id)}')">🖨 Print</button><button class="btn success" onclick="restoreExpiredCustomer('${esc(id)}')">Restore to Customers</button><button class="btn" onclick="closeModal()">Close</button>`);
+  }catch(e){console.error(e);toast(e.message||"Could not load expired customer details","err");}
 }
 async function renderExpiredPeople(c){
   const state=window.expiredPeoplePageState||{page:1,limit:50,search:'',total:0,totalPages:1};window.expiredPeoplePageState=state;
@@ -107,7 +134,7 @@ function renderBackup(c){
   <div class="grid-2"><div class="card section-card"><h3>💾 Database Backup</h3><p>Download a full server database backup (Administrator only).</p><button class="btn primary" ${admin?'':'disabled'} onclick="downloadBackup()">Download JSON Backup</button></div><div class="card section-card"><h3>📄 Payment Export</h3><p>Export all payment transactions as CSV for Excel.</p><button class="btn primary" onclick="downloadPaymentsCSV()">Export Payments CSV</button></div></div>
   <div class="card section-card" style="margin-top:18px"><h3>📥 Import Excel</h3><p>Import customers, loans, payments and optional blacklist/expired test records from an Excel workbook. Only Administrators can import.</p><p class="notice"><b>Supported sheets:</b> Reviews, Customers, Loans, Payments, Blacklist / Blacklist_Test, Expired / Expired_Test. The importer validates dates, required fields, references and duplicate records before saving.</p><div class="form-grid"><div class="form-group span-2"><label>Excel File *</label><input type="file" id="excelImportFile" accept=".xlsx,.xls,.xlsm"></div><div class="form-group"><label>Import Mode *</label><select id="excelImportMode"><option value="add">Add / Merge</option><option value="replace">Replace Current Data</option></select></div></div><div class="actions" style="margin-top:12px"><button class="btn" ${admin?'':'disabled'} onclick="previewExcelImport()">🔎 Preview & Validate</button><button class="btn primary" ${admin?'':'disabled'} onclick="importExcelData()">📥 Import Excel</button></div><div id="excelImportResult" style="margin-top:14px"></div></div>
   <div class="card section-card" style="margin-top:18px"><h3>Restore Backup</h3><p class="notice">Restoring replaces the current user data on the server. Use only a backup created by this application.</p><input type="file" id="restoreFile" accept=".json"><button class="btn" style="margin-top:10px" ${admin?'':'disabled'} onclick="restoreBackup()">Restore JSON Backup</button><hr style="margin:18px 0"><h3>Data Integrity</h3><p>Validate customer, loan, schedule, payment and blacklist references before backup/restore operations.</p><button class="btn" onclick="runDataValidation()">🔎 Validate Data</button><span id="validationResult" class="muted" style="margin-left:10px"></span></div>
-  <div class="card section-card" style="margin-top:18px"><h3>🚀 Phase 3 — PostgreSQL Migration</h3><p>Creates indexed PostgreSQL tables for customers, loans, schedules and payments. Your existing JSONB database is preserved as the source of truth during this phase.</p><p class="notice"><b>Safe migration:</b> this copies data only. It does not switch the application APIs yet.</p><div id="normalizedDbStatus" class="muted">Checking normalized database status…</div><div class="actions" style="margin-top:12px"><button class="btn" ${admin?'':'disabled'} onclick="migrateToNormalizedDb()">Migrate JSONB → PostgreSQL Tables</button><button class="btn" ${admin?'':'disabled'} onclick="loadNormalizedDbStatus()">Refresh Status</button></div></div>
+  <div class="card section-card" style="margin-top:18px"><h3>🚀 Phase 3 — PostgreSQL Migration</h3><p>Normalized PostgreSQL is active. The legacy JSON compatibility record contains only application settings; customers, loans, schedules, payments, blacklist and expired records are stored in normalized tables.</p><p class="notice"><b>Database mode:</b> Normalized PostgreSQL — do not rerun migration.</p><div id="normalizedDbStatus" class="muted">Checking normalized database status…</div><div class="actions" style="margin-top:12px"><button class="btn" onclick="loadNormalizedDbStatus()">Refresh Status</button></div></div>
   <div class="card section-card" style="margin-top:18px"><h3>Danger Zone</h3><p>Clear all customers, loans, schedules and payments from the server database.</p><button class="btn danger" ${admin?'':'disabled'} onclick="clearAllData()">🗑 Clear All Data</button></div>`;
   loadBackupSummary();
   loadNormalizedDbStatus();
