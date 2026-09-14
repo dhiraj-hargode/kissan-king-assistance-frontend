@@ -381,7 +381,7 @@ function generateSchedule(loan){
 
     rows.push({
       id:uid('SCH'),loanId:loan.id,customerId:loan.customerId,installment:i,
-      dueDate:addMonths(loan.startDate,i-1),principal,interest,emi,paid:0,
+      dueDate:addMonths(loan.startDate,i),principal,interest,emi,paid:0,
       penalty:0,status:'UPCOMING',ownerId:getCurrentUser()?.id||'ADMIN'
     });
     outstanding=Math.max(0,outstanding-principal);
@@ -417,7 +417,7 @@ function ensureConfiguredLoanSchedule(loan){
       ? Number((P*rate).toFixed(2))
       : Number((opening*rate).toFixed(2));
     const emi=Number((principal+interest).toFixed(2));
-    const dueDate=monthlyDueDate(loan.startDate,i-1);
+    const dueDate=monthlyDueDate(loan.startDate,i);
 
     if(s){
       // Keep the historical due date if it is valid; normalize ordinary
