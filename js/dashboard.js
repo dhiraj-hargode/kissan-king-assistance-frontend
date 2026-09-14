@@ -1,5 +1,5 @@
 // Dashboard and overview features.
-async function confirmDeleteRecord(type,id){
+function confirmDeleteRecord(type,id){
   if(currentUser?.role!=='Administrator') return;
   const labels={customer:"customer",loan:"loan",payment:"payment"};
   const label=labels[type]||"record";
@@ -39,10 +39,7 @@ async function confirmDeleteRecord(type,id){
     }
     db.payments=db.payments.filter(p=>p.id!==id);
   }
-  await save();
-  toast(`${label[0].toUpperCase()+label.slice(1)} deleted`);
-  closeModal();
-  renderPage(currentPage);
+  save(); toast(`${label[0].toUpperCase()+label.slice(1)} deleted`); closeModal(); renderPage(currentPage);
 }
 function printSection(title, html){
   const w=window.open("","_blank","width=1100,height=800");
