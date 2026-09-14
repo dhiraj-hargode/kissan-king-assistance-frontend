@@ -43,7 +43,8 @@ async function openPaymentFor(loanId,scheduleId=null){
   // accidentally saving the full installment defaults.
   f.principal.value="";
   f.interest.value="";
-  f.penalty.value=Math.max(0,Number(s.penalty||0)-db.payments.filter(p=>String(p.scheduleId||'')===String(s.id)).reduce((a,p)=>a+Number(p.penalty||0),0));
+  const applicablePenalty=scheduleApplicablePenalty(s);
+  f.penalty.value=Math.max(0,applicablePenalty-db.payments.filter(p=>String(p.scheduleId||'')===String(s.id)).reduce((a,p)=>a+Number(p.penalty||0),0));
   f.mode.value="Cash";
 }
 function calculatePaymentAmounts(loanId,scheduleId){
@@ -330,8 +331,10 @@ function repaymentScheduleDisplayRows(loan){
     const paidInterest=Math.max(0,Number(pay.interest||0));
     const paidPenalty=Math.max(0,Number(pay.penalty||0));
     const paidTotal=Number((paidPrincipal+paidInterest+paidPenalty).toFixed(2));
-    const scheduledPenalty=Math.max(0,Number(s.penalty||0));
-    const scheduledEmi=Math.max(0,Number(s.emi||scheduledPrincipal+scheduledInterest+scheduledPenalty));
+    // Penalty is NOT part of the contractual EMI. It is charged separately
+    // only when this installment is overdue.
+    const scheduledPenalty=scheduleApplicablePenalty({...s,dueDate});
+    const scheduledEmi=Math.max(0,Number(s.emi||scheduledPrincipal+scheduledInterest));
 
     cumulativePrincipalPaid += paidPrincipal;
     const remaining=Math.max(0,Number(loan.amount||0)-cumulativePrincipalPaid);
@@ -343,7 +346,7 @@ function repaymentScheduleDisplayRows(loan){
       dueDate,
       principal:scheduledPrincipal,
       interest:scheduledInterest,
-      emi:Number((scheduledPrincipal+scheduledInterest+scheduledPenalty).toFixed(2)) || scheduledEmi,
+      emi:Number((scheduledPrincipal+scheduledInterest).toFixed(2)) || scheduledEmi,
       paid:effectivePaid,
       penalty:scheduledPenalty,
       remaining,
