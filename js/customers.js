@@ -163,10 +163,12 @@ function renderRegistration(c){
     o.state="Maharashtra"; o.taluka="";
     const errors=validateCustomerInput(o); if(errors.length){toast(errors[0],"err");return;}
     try{
-      // Registration is intentionally lazy on page load. Hydrate the full
-      // legacy data only at the point where we actually need to append/save.
-      await ensureServerDataLoaded();
-      o.id=nextCustomerId();o.ownerId=getCurrentUser()?.id||"ADMIN";o.createdAt=new Date().toISOString();o.activityCreatedAt=o.createdAt;db.customers.push(o);save();toast("Customer created successfully");e.target.reset();openPage("customers");
+      const result=await apiJSON('/api/customers',{method:'POST',body:JSON.stringify({customer:o})});
+      customerListCache.expiresAt=0;
+      customerListCache.payload=null;
+      toast(`Customer ${result.customer?.id||''} created successfully`);
+      e.target.reset();
+      openPage("customers");
     }catch(err){console.error(err);toast(err.message||"Could not save customer","err");}
   }
 }
