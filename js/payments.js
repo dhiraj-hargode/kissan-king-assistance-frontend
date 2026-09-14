@@ -32,13 +32,22 @@ async function openPaymentFor(loanId,scheduleId=null,defaultPaymentDate=null){
   <form id="payForm"><div class="form-grid">${fg("Payment Date","date","date",true)}${fg("Principal","principal","number",true)}${fg("Interest","interest","number",true)}${fg("Penalty","penalty","number")}${fg("Payment Mode","mode","text",true)}${fg("Notes","notes")}</div><div class="notice">Installment due: <b>${fmtDate(s.dueDate)}</b>. Remaining installment amount: <b>${money(dueAmount(s))}</b>.</div></form>`,
   `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn" type="button" onclick="calculatePaymentAmounts('${l.id}','${s.id}')">🧮 Calculate</button><button class="btn primary" onclick="savePayment('${l.id}','${s.id}')">Save Payment</button>`);
   const f=document.getElementById("payForm");
-  // Context-aware payment date:
-  // - Today's Collection -> selected Collection Date (passed by caller)
-  // - Pending Payments -> installment Due Date (passed by caller)
-  // - Payment History / normal Payment Entry / other screens -> today
-  const resolvedPaymentDate = /^\d{4}-\d{2}-\d{2}$/.test(String(defaultPaymentDate||''))
-    ? String(defaultPaymentDate)
-    : todayISO();
+  // Context-aware Payment Date. Do NOT use today's date for Collection/Pending.
+  // Priority is based on the page context so this remains correct even if an
+  // older cached button calls openPaymentFor() without the optional date arg:
+  //   Today's Collection -> selected Collection Date
+  //   Pending Payments   -> installment Due Date
+  //   Payment Entry/History/other -> today's date
+  let resolvedPaymentDate=todayISO();
+  if(typeof currentPage!=="undefined" && currentPage==="today") {
+    const collectionDate=window.todayCollectionDate||defaultPaymentDate||todayISO();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(String(collectionDate))) resolvedPaymentDate=String(collectionDate);
+  } else if(typeof currentPage!=="undefined" && currentPage==="pending") {
+    const dueDate=s?.dueDate||defaultPaymentDate||todayISO();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(String(dueDate))) resolvedPaymentDate=String(dueDate);
+  } else if(/^\d{4}-\d{2}-\d{2}$/.test(String(defaultPaymentDate||""))) {
+    resolvedPaymentDate=String(defaultPaymentDate);
+  }
   f.date.value=resolvedPaymentDate;
   // Default the payment to the selected installment, not to the loan-level
   // balance. Legacy/interest-only installments can legitimately have ₹0
