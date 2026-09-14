@@ -95,10 +95,12 @@ async function savePayment(loanId,scheduleId){
       removePendingQueueId(x);
     });
   }
+  // Refresh notification state before the write so payment + schedule +
+  // notification changes are sent as one mutation instead of two sequential
+  // full JSONB rewrites.
+  refreshNotifications();
   await save();
   if(typeof paymentHistoryCache!=='undefined') paymentHistoryCache.clear();
-  const notificationsChanged=refreshNotifications();
-  if(notificationsChanged) await save();
   updateNotifCount();
   toast("Payment recorded successfully");closeModal();
   const returnPage=window.paymentReturnPage||"today";
