@@ -17,6 +17,17 @@ async function openPaymentFor(loanId,scheduleId=null){
   window.paymentReturnPage=(typeof currentPage!=="undefined"&&currentPage==="pending")?"pending":"today";
   const s=db.schedules.find(x=>x.id===scheduleId)||nextDue(l);
   if(!s){toast("This loan is completed.","err");return}
+  if(effectiveDueAmount(s)<=0.005){
+    // A stale Pending Payments row can survive in the client cache after the
+    // installment was already paid. Never open a zero-value payment form.
+    if(typeof pendingCollectionState!=='undefined'){
+      pendingCollectionState.cache.clear();
+      pendingCollectionState.requestKey="";
+    }
+    toast("This installment is already paid.","err");
+    if(typeof currentPage!=="undefined" && currentPage==="pending") openPage("pending");
+    return;
+  }
   openModal("Record Payment",`<div class="kpi-row"><div class="kpi"><b>${esc(customerName(c))}</b><span>Customer</span></div><div class="kpi"><b>${l.id}</b><span>Loan</span></div><div class="kpi"><b>${money(loanOutstanding(l))}</b><span>Outstanding Principal</span></div><div class="kpi"><b>${money(dueAmount(s))}</b><span>Current Due</span></div></div><hr>
   <form id="payForm"><div class="form-grid">${fg("Payment Date","date","date",true)}${fg("Principal","principal","number",true)}${fg("Interest","interest","number",true)}${fg("Penalty","penalty","number")}${fg("Payment Mode","mode","text",true)}${fg("Notes","notes")}</div><div class="notice">Installment due: <b>${fmtDate(s.dueDate)}</b>. Remaining installment amount: <b>${money(dueAmount(s))}</b>.</div></form>`,
   `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn" type="button" onclick="calculatePaymentAmounts('${l.id}','${s.id}')">🧮 Calculate</button><button class="btn primary" onclick="savePayment('${l.id}','${s.id}')">Save Payment</button>`);
@@ -99,6 +110,16 @@ async function savePayment(loanId,scheduleId){
   }
   await save();
   if(typeof paymentHistoryCache!=='undefined') paymentHistoryCache.clear();
+  if(typeof pendingCollectionState!=='undefined'){
+    pendingCollectionState.cache.clear();
+    pendingCollectionState.requestKey="";
+    pendingCollectionState.request=null;
+  }
+  if(typeof todayCollectionState!=='undefined'){
+    todayCollectionState.cache.clear();
+    todayCollectionState.requestKey="";
+    todayCollectionState.request=null;
+  }
   const notificationsChanged=refreshNotifications();
   if(notificationsChanged) await save();
   updateNotifCount();
