@@ -154,6 +154,9 @@ async function showSchedule(loanId){
 function openPaymentHistory(customerId=null, loanId=null){
   window.historyCustomerId=customerId||null;
   window.historyLoanId=loanId||null;
+  // Tell openPage() that this navigation intentionally carries a
+  // customer/loan filter. Generic History navigation will clear it.
+  window.historyPreserveFilter=Boolean(customerId||loanId);
   openPage("history");
 }
 let paymentHistoryState={page:1,limit:50,search:"",from:"",to:"",mode:"",customerId:"",loanId:"",total:0,totalPages:1,loading:false};
@@ -215,7 +218,17 @@ function renderPaymentHistory(c){
   const customerId=window.historyCustomerId||"";
   const loanId=window.historyLoanId||"";
   paymentHistoryState={page:1,limit:50,search:"",from:"",to:"",mode:"",customerId:String(customerId),loanId:String(loanId),total:0,totalPages:1,loading:false};
-  const initialQuery=loanId?String(loanId):"";
+  // Keep the visible search box in sync with the filter applied to the API.
+  // Customer history shows the customer name when available; loan history
+  // shows the loan ID. This prevents a hidden customerId/loanId filter from
+  // being active while the search box appears empty.
+  let initialQuery="";
+  if(customerId){
+    const cu=Array.isArray(db?.customers) ? db.customers.find(x=>String(x?.id)===String(customerId)) : null;
+    initialQuery=cu ? (customerName(cu)||String(customerId)) : String(customerId);
+  }else if(loanId){
+    initialQuery=String(loanId);
+  }
   c.innerHTML=header("Payment History","Complete transaction history with customer, loan and date filters.",`<button class="btn" onclick="printPaymentHistory()">🖨 Print</button><button class="btn primary" onclick="openPage('payment')">＋ Add Payment</button>`);
   c.innerHTML+=`<div class="card section-card history-filter-card"><div class="toolbar history-toolbar">
     <input class="grow" id="historySearch" placeholder="Search customer, mobile, Khata / loan ID..." value="${esc(initialQuery)}" oninput="paymentHistoryFilterChanged()">
