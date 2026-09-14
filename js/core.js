@@ -349,11 +349,10 @@ function ensureLegacyOperationalSchedules(untilDate=todayISO()){
   return false;
 }
 function generateSchedule(loan){
-  // Generate exactly the configured duration. EMI=YES supports both:
-  // - Flat Monthly: equal principal + flat monthly interest.
-  // - Reducing Balance: standard amortising EMI formula, with interest on
-  //   opening outstanding principal each month.
-  // EMI=NO is interest-only; principal is collected separately.
+  // EMI=YES uses equal principal installments. Interest is MONTHLY and is
+  // calculated on the opening outstanding principal for each installment.
+  // This is the application's village-loan / reducing-balance model.
+  // EMI=NO remains interest-only.
   const n=Number(loan.duration);
   if(!Number.isInteger(n)||n<1||!validISODate(loan.startDate))return;
 
@@ -363,16 +362,7 @@ function generateSchedule(loan){
   const method=String(loan.method||'Flat Monthly');
   const rows=[];
   let outstanding=P;
-
-  let reducingEmi=0;
-  if(emiOption==='YES' && method==='Reducing Balance'){
-    if(rate===0) reducingEmi=P/n;
-    else {
-      const factor=Math.pow(1+rate,n);
-      reducingEmi=P*rate*factor/(factor-1);
-    }
-    reducingEmi=Number(reducingEmi.toFixed(2));
-  }
+  const basePrincipal=n>0?Number((P/n).toFixed(2)):0;
 
   for(let i=1;i<=n;i++){
     let principal=0, interest=0, emi=0;
@@ -381,13 +371,11 @@ function generateSchedule(loan){
       principal=0;
       interest=Number((outstanding*rate).toFixed(2));
       emi=interest;
-    }else if(method==='Reducing Balance'){
-      interest=Number((outstanding*rate).toFixed(2));
-      principal=i===n ? Number(outstanding.toFixed(2)) : Number(Math.min(outstanding,Math.max(0,reducingEmi-interest)).toFixed(2));
-      emi=Number((principal+interest).toFixed(2));
     }else{
-      principal=i===n ? Number(outstanding.toFixed(2)) : Number((P/n).toFixed(2));
-      interest=Number((P*rate).toFixed(2));
+      principal=i===n ? Number(outstanding.toFixed(2)) : Math.min(basePrincipal,Number(outstanding.toFixed(2)));
+      interest=method==='Flat Monthly'
+        ? Number((P*rate).toFixed(2))
+        : Number((outstanding*rate).toFixed(2));
       emi=Number((principal+interest).toFixed(2));
     }
 
@@ -400,43 +388,76 @@ function generateSchedule(loan){
   }
   db.schedules.push(...rows);
 }
+
 function ensureConfiguredLoanSchedule(loan){
   if(!loan || String(loan.emiOption||'YES').toUpperCase()!=='YES') return false;
   const n=Number(loan.duration);
   if(!Number.isInteger(n)||n<1||!validISODate(loan.startDate)) return false;
 
-  const existing=scheduleFor(loan.id).filter(s=>Number(s.installment||0)>=1 && Number(s.installment||0)<=n);
-  const existingByInstallment=new Map(existing.map(s=>[Number(s.installment),s]));
-  if(existingByInstallment.size>=n) return false;
-
-  // This application uses equal monthly principal with interest calculated on
-  // the opening outstanding principal. The configured interest rate is MONTHLY.
-  // Preserve all existing/paid rows and only create missing duration rows.
-  const paidPrincipalTotal=Math.max(0,paidPrincipal(loan.id));
-  const monthlyPrincipal=Number((Number(loan.amount||0)/n).toFixed(2));
+  const existing=scheduleFor(loan.id)
+    .filter(s=>Number(s.installment||0)>=1 && Number(s.installment||0)<=n)
+    .sort((a,b)=>Number(a.installment)-Number(b.installment));
+  const byInstallment=new Map(existing.map(s=>[Number(s.installment),s]));
+  const P=Math.max(0,Number(loan.amount)||0);
   const rate=Math.max(0,Number(loan.interestRate||0))/100;
-  const method=String(loan.method||'Reducing Balance');
-  const added=[];
+  const method=String(loan.method||'Flat Monthly');
+  const basePrincipal=n>0?Number((P/n).toFixed(2)):0;
+  let scheduledPrincipalBefore=0;
+  let changed=false;
 
+  // Complete the contractual duration and normalize all unpaid schedule
+  // economics. Historical ledger payments are never deleted or changed.
   for(let i=1;i<=n;i++){
-    if(existingByInstallment.has(i)) continue;
-    const priorPrincipal=Math.min(Number(loan.amount||0), Math.max(0, paidPrincipalTotal + monthlyPrincipal*(i-1)));
-    const openingOutstanding=Math.max(0,Number(loan.amount||0)-priorPrincipal);
-    const principal=i===n ? openingOutstanding : Math.min(monthlyPrincipal,openingOutstanding);
-    let interest=0;
-    if(method==='Flat Monthly') interest=Number((Number(loan.amount||0)*rate).toFixed(2));
-    else interest=Number((openingOutstanding*rate).toFixed(2));
+    const s=byInstallment.get(i);
+    const opening=Math.max(0,Number((P-scheduledPrincipalBefore).toFixed(2)));
+    const principal=String(loan.emiOption||'YES').toUpperCase()==='NO'
+      ? 0
+      : (i===n ? opening : Math.min(basePrincipal,opening));
+    const interest=method==='Flat Monthly'
+      ? Number((P*rate).toFixed(2))
+      : Number((opening*rate).toFixed(2));
     const emi=Number((principal+interest).toFixed(2));
-    if(principal<=0.005 && interest<=0.005) continue;
     const dueDate=monthlyDueDate(loan.startDate,i-1);
-    added.push({
-      id:uid('SCH'),loanId:loan.id,customerId:loan.customerId,installment:i,
-      dueDate,principal,interest,emi,paid:0,penalty:0,status:statusForSchedule({dueDate,paid:0,emi}),
-      ownerId:getCurrentUser()?.id||'ADMIN'
-    });
+
+    if(s){
+      // Keep the historical due date if it is valid; normalize ordinary
+      // duration rows to the contractual monthly date.
+      if(validISODate(dueDate) && s.dueDate!==dueDate){s.dueDate=dueDate;changed=true;}
+
+      const ledger=schedulePaymentBreakdown(s);
+      const hasLedgerPayment=ledger.total>0.005;
+      const storedPaid=Math.max(0,Number(s.paid||0));
+      const effectivePaid=Math.max(storedPaid,ledger.principal+ledger.interest);
+      const wasPaid=effectivePaid+0.005>=Math.max(0,Number(s.emi||0));
+
+      // A paid historical row keeps its recorded economics. Unpaid rows are
+      // recalculated from the loan contract so stale imported values cannot
+      // produce wrong monthly interest/EMI figures.
+      if(!wasPaid && !hasLedgerPayment){
+        if(Math.abs(Number(s.principal||0)-principal)>0.005){s.principal=principal;changed=true;}
+        if(Math.abs(Number(s.interest||0)-interest)>0.005){s.interest=interest;changed=true;}
+        if(Math.abs(Number(s.emi||0)-emi)>0.005){s.emi=emi;changed=true;}
+        if(Math.abs(Number(s.penalty||0)-Number(loan.penalty||0))>0.005){s.penalty=Math.max(0,Number(loan.penalty||0));changed=true;}
+        const nextStatus=effectiveScheduleStatus(s);
+        if(s.status!==nextStatus){s.status=nextStatus;changed=true;}
+      }
+    }else{
+      if(principal<=0.005 && interest<=0.005) continue;
+      const created={
+        id:uid('SCH'),loanId:loan.id,customerId:loan.customerId,installment:i,
+        dueDate,principal,interest,emi,paid:0,penalty:0,
+        status:effectiveScheduleStatus({dueDate,paid:0,emi}),
+        ownerId:getCurrentUser()?.id||'ADMIN'
+      };
+      db.schedules.push(created);
+      byInstallment.set(i,created);
+      changed=true;
+    }
+
+    scheduledPrincipalBefore += principal;
   }
-  if(added.length){db.schedules.push(...added);return true;}
-  return false;
+
+  return changed;
 }
 
 function recalculateFutureInterest(loanId){
@@ -446,25 +467,39 @@ function recalculateFutureInterest(loanId){
   const rate=Math.max(0,Number(l.interestRate||0))/100;
   const method=String(l.method||'Flat Monthly');
   const emiOption=String(l.emiOption||'YES').toUpperCase();
-  const currentOutstanding=loanOutstanding(l);
-  schedules.forEach(s=>{
-    if(String(s.status||'').toUpperCase()==='PAID') return;
-    // Do not rewrite the economics of a partially paid current installment.
-    // Its agreed interest belongs to that cycle; only untouched future cycles
-    // should be recalculated from the new outstanding principal.
+  const P=Math.max(0,Number(l.amount||0));
+  const n=Math.max(1,Number(l.duration)||schedules.length||1);
+  const basePrincipal=Number((P/n).toFixed(2));
+  let scheduledPrincipalBefore=0;
+
+  schedules.forEach((s,index)=>{
+    const installment=Number(s.installment||index+1);
+    const isContractRow=installment>=1 && installment<=n;
+    if(!isContractRow) return;
+
+    const opening=Math.max(0,Number((P-scheduledPrincipalBefore).toFixed(2)));
+    const contractPrincipal=emiOption==='NO' ? 0 : (installment===n ? opening : Math.min(basePrincipal,opening));
+    const contractInterest=method==='Flat Monthly'
+      ? Number((P*rate).toFixed(2))
+      : Number((opening*rate).toFixed(2));
+
     const paid=schedulePaymentBreakdown(s);
-    if(paid.total>0.005 && effectiveDueAmount(s)>0.005) return;
-    const originalPrincipal=Math.max(0,Number(s.principal||0));
-    const interestBase=method==='Flat Monthly' ? Number(l.amount||0) : currentOutstanding;
-    const interest=Number((Math.max(0,interestBase)*rate).toFixed(2));
-    s.interest=interest;
-    if(emiOption==='NO') s.principal=0;
-    else s.principal=Math.min(originalPrincipal,currentOutstanding);
-    s.emi=Number((Math.max(0,Number(s.principal||0))+interest).toFixed(2));
-    s.penalty=Math.max(0,Number(l.penalty||0));
-    s.status=effectiveScheduleStatus(s);
+    const effectivePaid=Math.max(Number(s.paid||0),paid.principal+paid.interest);
+    const fullyPaid=effectivePaid+0.005>=Number(s.emi||0);
+
+    // Historical paid installments are immutable. Recalculate only an unpaid
+    // contract row, preventing a later loan edit from rewriting transactions.
+    if(!fullyPaid && paid.total<=0.005){
+      s.principal=contractPrincipal;
+      s.interest=contractInterest;
+      s.emi=Number((contractPrincipal+contractInterest).toFixed(2));
+      s.penalty=Math.max(0,Number(l.penalty||0));
+      s.status=effectiveScheduleStatus(s);
+    }
+    scheduledPrincipalBefore+=contractPrincipal;
   });
 }
+
 function refreshNotifications(){
   // Notifications are now driven ONLY by the explicit Pending Payments queue.
   // Ordinary overdue/due installments do not create notifications until the
