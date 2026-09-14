@@ -9,7 +9,7 @@ async function searchPaymentLoans(q){
   const ls=activeLoans().filter(l=>{const c=db.customers.find(x=>x.id===l.customerId);return (l.id+" "+(l.khataNo||"")+" "+(l.legacyKhataNo||"")+" "+l.customerId+" "+customerName(c||{})+" "+(c?.mobile||"")).toLowerCase().includes(q)});
   r.className="payment-search-results";r.innerHTML=ls.length?`<div class="payment-results-desktop"><div class="table-wrap"><table class="data-table"><thead><tr><th>Loan</th><th>Khata</th><th>Customer</th><th>Mobile</th><th>Amount</th><th>Remaining</th><th>Next EMI</th><th>Action</th></tr></thead><tbody>${ls.map(l=>{const c=db.customers.find(x=>x.id===l.customerId),n=nextDue(l);return `<tr><td>${esc(l.id)}</td><td>${esc(l.khataNo||l.legacyKhataNo||"-")}</td><td>${esc(customerName(c||{}))}</td><td>${esc(c?.mobile||"-")}</td><td>${money(l.amount)}</td><td>${money(loanOutstanding(l))}</td><td>${n?fmtDate(n.dueDate):"Completed"}</td><td><button class="btn small primary" onclick="openPaymentFor('${l.id}')">Open Payment</button></td></tr>`}).join("")}</tbody></table></div></div><div class="payment-results-mobile">${ls.map((l,i)=>{const c=db.customers.find(x=>x.id===l.customerId),n=nextDue(l),out=loanOutstanding(l);return `<article class="payment-loan-card"><div class="payment-loan-head"><div class="payment-loan-title"><span class="payment-loan-index">${i+1}</span><div><b>${esc(customerName(c||{}))}</b><small>${esc(l.id)} · Khata ${esc(l.khataNo||l.legacyKhataNo||"-")}</small></div></div><span class="payment-loan-status">${out>0.005?"OPEN":"PAID"}</span></div><div class="payment-loan-contact"><span>📱 ${esc(c?.mobile||"-")}</span><span>📅 ${n?fmtDate(n.dueDate):"Completed"}</span></div><div class="payment-loan-grid"><div><small>Loan Amount</small><b>${money(l.amount)}</b></div><div><small>Outstanding</small><b>${money(out)}</b></div></div><button type="button" class="btn primary payment-loan-action" onclick="openPaymentFor('${l.id}')">💳 Open Payment</button></article>`}).join("")}</div>`:`<div class="empty"><div class="emoji">🔎</div><h3>No matching loan</h3><p>Try a loan ID, Khata number, customer name, ID or mobile.</p></div>`;
 }
-async function openPaymentFor(loanId,scheduleId=null){
+async function openPaymentFor(loanId,scheduleId=null,defaultPaymentDate=null){
   await ensureServerDataLoaded();
   const l=db.loans.find(x=>x.id===loanId),c=l&&db.customers.find(x=>x.id===l.customerId);if(!l||!c)return; if(isExpiredCustomer(c.id)){toast("Expired/deceased customers are excluded from collection. View them under Expired People.","err");return;}
   // Remember where the payment was opened from. Completing a payment from
@@ -32,7 +32,14 @@ async function openPaymentFor(loanId,scheduleId=null){
   <form id="payForm"><div class="form-grid">${fg("Payment Date","date","date",true)}${fg("Principal","principal","number",true)}${fg("Interest","interest","number",true)}${fg("Penalty","penalty","number")}${fg("Payment Mode","mode","text",true)}${fg("Notes","notes")}</div><div class="notice">Installment due: <b>${fmtDate(s.dueDate)}</b>. Remaining installment amount: <b>${money(dueAmount(s))}</b>.</div></form>`,
   `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn" type="button" onclick="calculatePaymentAmounts('${l.id}','${s.id}')">🧮 Calculate</button><button class="btn primary" onclick="savePayment('${l.id}','${s.id}')">Save Payment</button>`);
   const f=document.getElementById("payForm");
-  f.date.value=todayISO();
+  // Context-aware payment date:
+  // - Today's Collection -> selected Collection Date (passed by caller)
+  // - Pending Payments -> installment Due Date (passed by caller)
+  // - Payment History / normal Payment Entry / other screens -> today
+  const resolvedPaymentDate = /^\d{4}-\d{2}-\d{2}$/.test(String(defaultPaymentDate||''))
+    ? String(defaultPaymentDate)
+    : todayISO();
+  f.date.value=resolvedPaymentDate;
   // Default the payment to the selected installment, not to the loan-level
   // balance. Legacy/interest-only installments can legitimately have ₹0
   // principal outstanding while still having an unpaid interest amount.
