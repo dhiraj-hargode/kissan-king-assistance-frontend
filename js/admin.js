@@ -118,7 +118,32 @@ async function loadBackupSummary(){
 function readExcelBase64(file){return new Promise((resolve,reject)=>{if(!file)return reject(new Error('Select an Excel file first.'));if(file.size>10*1024*1024)return reject(new Error('Excel file must be 10 MB or smaller.'));const r=new FileReader();r.onload=()=>{const s=String(r.result||'');resolve(s.includes(',')?s.split(',')[1]:s)};r.onerror=()=>reject(new Error('Could not read the Excel file.'));r.readAsDataURL(file);});}
 function showExcelImportResult(result,preview=true){const el=document.getElementById('excelImportResult');if(!el)return;const st=result.stats||{};const counts=`<div class="summary"><div class="box"><b>${st.customers||0}</b><br>Customers</div><div class="box"><b>${st.loans||0}</b><br>Loans</div><div class="box"><b>${st.payments||0}</b><br>Payments</div><div class="box"><b>${st.schedules||0}</b><br>Schedules</div><div class="box"><b>${st.skipped||0}</b><br>Skipped</div></div>`;const issues=result.issues||result.details||[];el.innerHTML=counts+(issues.length?`<div class="notice" style="margin-top:12px"><b>${preview?'Validation issues':'Import failed'}:</b><ul>${issues.slice(0,20).map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:`<div class="notice success" style="margin-top:12px">✓ ${preview?'Validation passed. Ready to import.':'Excel import completed successfully.'}</div>`);}
 async function previewExcelImport(){if(currentUser?.role!=='Administrator')return;const file=document.getElementById('excelImportFile')?.files?.[0];const mode=document.getElementById('excelImportMode')?.value||'add';const el=document.getElementById('excelImportResult');if(el)el.innerHTML='<span class="muted">Reading and validating Excel…</span>';try{const fileBase64=await readExcelBase64(file);const result=await apiJSON('/api/import-excel',{method:'POST',body:JSON.stringify({fileBase64,mode,preview:true})});showExcelImportResult(result,true);if(result.sheets?.length)el.innerHTML+=`<p class="muted">Sheets detected: ${result.sheets.map(esc).join(', ')}</p>`;}catch(e){if(el)el.innerHTML=`<div class="notice" style="color:#b42318">${esc(e.message||'Excel preview failed.')}</div>`;}}
-async function importExcelData(){if(currentUser?.role!=='Administrator')return;const file=document.getElementById('excelImportFile')?.files?.[0];const mode=document.getElementById('excelImportMode')?.value||'add';if(!file)return toast('Select an Excel file first.','err');if(mode==='replace'&&!confirm('Replace current business data with this Excel file? A JSON backup will be created automatically before replacement.'))return;const el=document.getElementById('excelImportResult');if(el)el.innerHTML='<span class="muted">Importing Excel…</span>';try{const fileBase64=await readExcelBase64(file);const result=await apiJSON('/api/import-excel',{method:'POST',body:JSON.stringify({fileBase64,mode,preview:false})});await loadServerData();showExcelImportResult(result,false);toast(`Excel imported: ${result.stats?.customers||0} customers, ${result.stats?.loans||0} loans, ${result.stats?.payments||0} payments`);renderPage('backup');}catch(e){if(el)el.innerHTML=`<div class="notice" style="color:#b42318">${esc(e.message||'Excel import failed.')}</div>`;toast(e.message||'Excel import failed.','err');}}
+let excelImportInFlight=false;
+async function importExcelData(){
+  if(currentUser?.role!=='Administrator')return;
+  if(excelImportInFlight){toast('An Excel import is already in progress. Please wait.','err');return;}
+  const file=document.getElementById('excelImportFile')?.files?.[0];
+  const mode=document.getElementById('excelImportMode')?.value||'add';
+  if(!file)return toast('Select an Excel file first.','err');
+  if(mode==='replace'&&!confirm('Replace current business data with this Excel file? A JSON backup will be created automatically before replacement.'))return;
+  const el=document.getElementById('excelImportResult');
+  const buttons=[...document.querySelectorAll('button')].filter(b=>/Import Excel/.test(b.textContent||''));
+  excelImportInFlight=true; buttons.forEach(b=>{b.disabled=true;b.dataset.importBusy='1';b.textContent='⏳ Importing…';});
+  if(el)el.innerHTML='<span class="muted">Importing Excel… Please keep this page open and do not click Import again.</span>';
+  try{
+    const fileBase64=await readExcelBase64(file);
+    const result=await apiJSON('/api/import-excel',{method:'POST',body:JSON.stringify({fileBase64,mode,preview:false})});
+    showExcelImportResult(result,false);
+    await loadBackupSummary();
+    toast(`Excel imported: ${result.stats?.customers||0} customers, ${result.stats?.loans||0} loans, ${result.stats?.payments||0} payments`);
+  }catch(e){
+    if(el)el.innerHTML=`<div class="notice" style="color:#b42318">${esc(e.message||'Excel import failed.')}</div>`;
+    toast(e.message||'Excel import failed.','err');
+  }finally{
+    excelImportInFlight=false;
+    buttons.forEach(b=>{b.disabled=false;b.textContent='📥 Import Excel';delete b.dataset.importBusy;});
+  }
+}
 function downloadFile(name,text,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();URL.revokeObjectURL(a.href)}
 async function downloadBackup(){if(currentUser?.role!=="Administrator"){toast("Only Administrators can download a full server backup.","err");return;}try{const payload=await apiJSON("/api/backup");downloadFile(`loan-management-server-backup-${todayISO()}.json`,JSON.stringify(payload,null,2),"application/json");toast("Server backup downloaded");}catch(e){toast(e.message||"Backup failed","err")}}
 async function downloadPaymentsCSV(){
