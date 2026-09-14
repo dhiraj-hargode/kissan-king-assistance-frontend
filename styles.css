@@ -669,3 +669,7 @@ button,input,select,textarea{font-family:inherit}
   .payment-loan-grid>div{padding:8px}
   .payment-loan-grid b{font-size:12px}
 }
+
+/* Dashboard: keep Top Overdue Customers at the very bottom as a clean full-width section. */
+.dashboard-top-overdue-final{grid-template-columns:1fr;}
+.dashboard-top-overdue-final .dashboard-panel{width:100%;}
