@@ -164,11 +164,12 @@ function renderRegistration(c){
     const errors=validateCustomerInput(o); if(errors.length){toast(errors[0],"err");return;}
     try{
       const result=await apiJSON('/api/customers',{method:'POST',body:JSON.stringify({customer:o})});
-      customerListCache.expiresAt=0;
-      customerListCache.payload=null;
-      toast(`Customer ${result.customer?.id||''} created successfully`);
-      e.target.reset();
-      openPage("customers");
+      // Keep the in-memory list invalidated rather than hydrating the full 540+ KB
+      // database just to append one newly-created customer. The Customers page
+      // will fetch the authoritative paginated list after navigation.
+      serverDataLoaded=false;
+      if(result?.customer) db.customers.push(result.customer);
+      toast("Customer created successfully");e.target.reset();openPage("customers");
     }catch(err){console.error(err);toast(err.message||"Could not save customer","err");}
   }
 }
