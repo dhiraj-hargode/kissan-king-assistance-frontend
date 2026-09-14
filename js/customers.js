@@ -1,6 +1,9 @@
 // Customer registration, search, profile and customer actions.
 let customerPageState={page:1,limit:50,search:"",loading:false,total:0,totalPages:1};
 let customerSearchTimer=null;
+let customerListRequest=null;
+let customerListRequestKey="";
+let customerListCache={key:"",expiresAt:0,payload:null};
 
 async function loadCustomersPage(page=customerPageState.page, search=customerPageState.search){
   const c=document.getElementById("content");
@@ -17,7 +20,24 @@ async function loadCustomersPage(page=customerPageState.page, search=customerPag
     order:"asc"
   });
 
-  const x=await apiJSON(`/api/customers?${params.toString()}`);
+  const requestKey=params.toString();
+  let x;
+  const now=Date.now();
+  if(customerListCache.key===requestKey && customerListCache.payload && customerListCache.expiresAt>now){
+    x=customerListCache.payload;
+  }else if(customerListRequest && customerListRequestKey===requestKey){
+    x=await customerListRequest;
+  }else{
+    customerListRequestKey=requestKey;
+    customerListRequest=apiJSON(`/api/customers?${requestKey}`);
+    try{
+      x=await customerListRequest;
+      customerListCache={key:requestKey,expiresAt:Date.now()+3000,payload:x};
+    }finally{
+      customerListRequest=null;
+      customerListRequestKey="";
+    }
+  }
   const pagination=x.pagination||{};
   customerPageState.page=Number(pagination.page||1);
   customerPageState.total=Number(pagination.total||0);
@@ -107,8 +127,10 @@ function filterTable(id,q){
 async function customerAction(select,id){
   const action=select.value;select.value="";if(!action)return;
   try{
-    // Viewing a customer is now lazy-loaded and does not require the full /api/db payload.
-    if(action === "view"){ await viewCustomer(id); return; }
+    if(action==="view"){
+      await viewCustomer(id);
+      return;
+    }
     await ensureServerDataLoaded();
     switch(action){
       case "edit":openEditCustomer(id);break;
@@ -177,32 +199,52 @@ function saveCustomerEdit(id){
 }
 
 async function viewCustomer(id){
+  const customerId=String(id);
+  openModal("Customer Details",`<div class="empty"><div class="emoji">⏳</div><h3>Loading customer details...</h3><p>Fetching only this customer's loans and payment data.</p></div>`,`<button class="btn" onclick="closeModal()">Close</button>`);
   try{
-    const x=await apiJSON(`/api/customers/${encodeURIComponent(String(id))}`);
+    const x=await apiJSON(`/api/customers/${encodeURIComponent(customerId)}`);
     const cu=x.customer;
-    if(!cu){toast("Customer could not be found.","err");return;}
+    if(!cu) throw new Error("Customer not found");
     const ls=Array.isArray(x.loans)?x.loans:[];
     const payments=Array.isArray(x.payments)?x.payments:[];
-    const paidByLoan=new Map();
+    const schedules=Array.isArray(x.schedules)?x.schedules:[];
+    const blacklist=Boolean(x.blacklist);
+    const totalLoan=ls.reduce((a,l)=>a+Number(l.amount||0),0);
+    const paidByLoan={};
     payments.forEach(p=>{
       const lid=String(p.loanId||"");
-      paidByLoan.set(lid,(paidByLoan.get(lid)||0)+Number(p.principal||0));
+      paidByLoan[lid]=(paidByLoan[lid]||0)+Number(p.total||0);
     });
-    const outstanding=l=>Math.max(0,Number(l.amount||0)-(paidByLoan.get(String(l.id))||0));
-    const totalPaidFor=l=>paidByLoan.get(String(l.id))||0;
-    const totalLoan=ls.reduce((a,l)=>a+Number(l.amount||0),0);
-    const totalOutstanding=ls.reduce((a,l)=>a+outstanding(l),0);
-    const isBlacklisted=Array.isArray(x.blacklist)&&x.blacklist.length>0;
-
-    openModal(`Customer — ${esc(customerName(cu))}`,`<div class="kpi-row">
-      <div class="kpi"><b>${esc(cu.id)}</b><span>Customer ID</span></div><div class="kpi"><b>${esc(cu.mobile||"-")}</b><span>Mobile</span></div><div class="kpi"><b>${money(totalLoan)}</b><span>Total Loan</span></div><div class="kpi"><b>${money(totalOutstanding)}</b><span>Outstanding</span></div>
+    const paidForLoan=l=>Number(paidByLoan[String(l.id)]||0);
+    const outstanding=l=>Math.max(0,Number(l.amount||0)-paidForLoan(l));
+    const body=`<div class="kpi-row">
+      <div class="kpi"><b>${esc(cu.id)}</b><span>Customer ID</span></div>
+      <div class="kpi"><b>${esc(cu.mobile||"-")}</b><span>Mobile</span></div>
+      <div class="kpi"><b>${money(totalLoan)}</b><span>Total Loan</span></div>
+      <div class="kpi"><b>${money(ls.reduce((a,l)=>a+outstanding(l),0))}</b><span>Outstanding</span></div>
     </div><hr><p><b>Address:</b> ${esc(cu.address||"-")}</p><p><b>City:</b> ${esc(cu.city||cu.village||"-")} &nbsp; <b>District:</b> ${esc(cu.district||"-")}</p><p><b>Guarantor:</b> ${esc(cu.guarantorName||"-")} · ${esc(cu.guarantorMobile||"-")}</p>
-    <h3>Loans</h3>${ls.length?`<div class="customer-loans-desktop"><div class="table-wrap"><table class="data-table"><thead><tr><th>Loan ID</th><th>Amount</th><th>Rate</th><th>Start</th><th>Paid</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${ls.map(l=>`<tr><td>${esc(l.id)}</td><td>${money(l.amount)}</td><td>${esc(String(l.interestRate||0))}%</td><td>${fmtDate(l.startDate)}</td><td>${money(totalPaidFor(l))}</td><td>${money(outstanding(l))}</td><td><span class="badge ${outstanding(l)>0?"green":"blue"}">${outstanding(l)>0?"ACTIVE":"COMPLETED"}</span></td></tr>`).join("")}</tbody></table></div></div><div class="customer-loans-mobile">${ls.map(l=>`<article class="customer-loan-card"><div class="customer-loan-head"><div><b>${esc(l.id)}</b><span>Khata ${esc(l.khataNo||l.legacyKhataNo||"-")}</span></div><span class="badge ${outstanding(l)>0?"green":"blue"}">${outstanding(l)>0?"ACTIVE":"COMPLETED"}</span></div><div class="customer-loan-grid"><div><small>Amount</small><b>${money(l.amount)}</b></div><div><small>Rate</small><b>${esc(String(l.interestRate||0))}%</b></div><div><small>Start</small><b>${fmtDate(l.startDate)}</b></div><div><small>Paid</small><b>${money(totalPaidFor(l))}</b></div><div><small>Remaining</small><b>${money(outstanding(l))}</b></div><div><small>Against</small><b>${esc(l.loanAgainst||"-")}</b></div></div><button type="button" class="btn primary customer-loan-view" onclick="closeModal();viewLoan('${esc(l.id)}')">View Loan</button></article>`).join("")}</div>`:`<div class="empty">No loans for this customer.</div>`}`,`<button class="btn" onclick="closeModal()">Close</button><button class="btn primary" onclick="ensureServerDataLoaded().then(()=>openEditCustomer('${esc(id)}'))">✏ Edit Customer</button><button class="btn" onclick="ensureServerDataLoaded().then(()=>{closeModal();openPaymentHistory('${esc(id)}')})">🧾 Payment History</button><button class="btn" onclick="ensureServerDataLoaded().then(()=>printCustomer('${esc(id)}'))">🖨 Print</button>${isBlacklisted?`<button class="btn success" onclick="ensureServerDataLoaded().then(()=>unblacklist('${esc(id)}'))">Remove Blacklist</button>`:`<button class="btn danger" onclick="ensureServerDataLoaded().then(()=>openBlacklistForm('${esc(id)}'))">🔴 Blacklist Customer</button>`}${currentUser?.role==='Administrator'?`<button class="btn danger" onclick="ensureServerDataLoaded().then(()=>confirmDeleteRecord('customer','${esc(id)}'))">Delete</button>`:`<button class="btn danger" disabled title="Only Administrators can delete records">Delete</button>`}<button class="btn primary" onclick="ensureServerDataLoaded().then(()=>{closeModal();newLoan('${esc(id)}')})">+ New Loan</button>`);
+    <h3>Loans</h3>${ls.length?`<div class="customer-loans-desktop"><div class="table-wrap"><table class="data-table"><thead><tr><th>Loan ID</th><th>Amount</th><th>Rate</th><th>Start</th><th>Paid</th><th>Remaining</th><th>Status</th></tr></thead><tbody>${ls.map(l=>{const rem=outstanding(l);return `<tr><td>${esc(l.id)}</td><td>${money(l.amount)}</td><td>${esc(String(l.interestRate||0))}%</td><td>${fmtDate(l.startDate)}</td><td>${money(paidForLoan(l))}</td><td>${money(rem)}</td><td><span class="badge ${rem>0?"green":"blue"}">${rem>0?"ACTIVE":"COMPLETED"}</span></td></tr>`}).join("")}</tbody></table></div></div><div class="customer-loans-mobile">${ls.map(l=>{const rem=outstanding(l);return `<article class="customer-loan-card"><div class="customer-loan-head"><div><b>${esc(l.id)}</b><span>Khata ${esc(l.khataNo||l.legacyKhataNo||"-")}</span></div><span class="badge ${rem>0?"green":"blue"}">${rem>0?"ACTIVE":"COMPLETED"}</span></div><div class="customer-loan-grid"><div><small>Amount</small><b>${money(l.amount)}</b></div><div><small>Rate</small><b>${esc(String(l.interestRate||0))}%</b></div><div><small>Start</small><b>${fmtDate(l.startDate)}</b></div><div><small>Paid</small><b>${money(paidForLoan(l))}</b></div><div><small>Remaining</small><b>${money(rem)}</b></div><div><small>Against</small><b>${esc(l.loanAgainst||"-")}</b></div></div><button type="button" class="btn primary customer-loan-view" onclick="loadAndViewLoan('${esc(l.id)}')">View Loan</button></article>`}).join("")}</div>`:`<div class="empty">No loans for this customer.</div>`}`;
+    openModal(`Customer — ${esc(customerName(cu))}`,body,`<button class="btn" onclick="closeModal()">Close</button><button class="btn primary" onclick="loadAndEditCustomer('${esc(customerId)}')">✏ Edit Customer</button><button class="btn" onclick="loadAndOpenPaymentHistory('${esc(customerId)}')">🧾 Payment History</button><button class="btn" onclick="loadAndPrintCustomer('${esc(customerId)}')">🖨 Print</button>${blacklist?`<button class="btn success" onclick="loadAndUnblacklist('${esc(customerId)}')">Remove Blacklist</button>`:`<button class="btn danger" onclick="loadAndBlacklistCustomer('${esc(customerId)}')">🔴 Blacklist Customer</button>`}${currentUser?.role==='Administrator'?`<button class="btn danger" onclick="loadAndDeleteCustomer('${esc(customerId)}')">Delete</button>`:`<button class="btn danger" disabled title="Only Administrators can delete records">Delete</button>`}<button class="btn primary" onclick="loadAndNewLoan('${esc(customerId)}')">+ New Loan</button>`);
+    window.__customerDetailCache={id:customerId,customer:cu,loans:ls,payments,schedules,blacklist};
   }catch(e){
     console.error(e);
-    toast(e.message||"Could not load customer details","err");
+    openModal("Customer Details",`<div class="empty"><div class="emoji">⚠</div><h3>Could not load customer details</h3><p>${esc(e.message||"Request failed")}</p></div>`,`<button class="btn" onclick="closeModal()">Close</button><button class="btn primary" onclick="viewCustomer('${esc(customerId)}')">Retry</button>`);
   }
 }
+
+async function loadAndEnsureCustomerAction(fn,id){
+  await ensureServerDataLoaded();
+  closeModal();
+  fn(id);
+}
+function loadAndEditCustomer(id){return loadAndEnsureCustomerAction(openEditCustomer,id)}
+function loadAndOpenPaymentHistory(id){return loadAndEnsureCustomerAction(openPaymentHistory,id)}
+function loadAndPrintCustomer(id){return loadAndEnsureCustomerAction(printCustomer,id)}
+function loadAndUnblacklist(id){return loadAndEnsureCustomerAction(unblacklist,id)}
+function loadAndBlacklistCustomer(id){return loadAndEnsureCustomerAction(openBlacklistForm,id)}
+function loadAndDeleteCustomer(id){return loadAndEnsureCustomerAction(()=>confirmDeleteRecord("customer",id),id)}
+function loadAndNewLoan(id){return loadAndEnsureCustomerAction(newLoan,id)}
+function loadAndViewLoan(id){return loadAndEnsureCustomerAction(viewLoan,id)}
 
 function printCustomer(id){
   const cu=db.customers.find(c=>c.id===id);if(!cu)return;
