@@ -62,7 +62,7 @@ async function confirmDeleteRecord(type,id){
     await save();
     toast(`${label[0].toUpperCase()+label.slice(1)} deleted successfully`);
     closeModal();
-    renderPage(currentPage);
+    await refreshAllPagesAfterMutation();
   }catch(e){
     toast(e.message||`Could not delete ${label}. No server change was confirmed.`,"err");
     await loadServerData().catch(()=>{});

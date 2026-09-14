@@ -145,6 +145,37 @@ function save(){
   });
   return saveQueue;
 }
+// Invalidate every client-side page cache after a completed mutation.
+// PostgreSQL is authoritative; cached list responses must never make a deleted
+// or edited record appear again when the user revisits another page.
+async function refreshAllPagesAfterMutation(){
+  serverDataLoaded=false;
+  serverSnapshot=null;
+
+  if(typeof customerListCache!=='undefined') customerListCache={key:"",expiresAt:0,payload:null};
+  if(typeof loanListCache!=='undefined') loanListCache={key:"",expiresAt:0,payload:null};
+  if(typeof paymentHistoryCache!=='undefined' && paymentHistoryCache?.clear) paymentHistoryCache.clear();
+  if(typeof paymentHistoryRequestToken!=='undefined') paymentHistoryRequestToken++;
+  if(typeof todayCollectionState!=='undefined'){
+    todayCollectionState.requestKey="";
+    todayCollectionState.request=null;
+    if(todayCollectionState.cache?.clear) todayCollectionState.cache.clear();
+  }
+  if(typeof pendingCollectionState!=='undefined'){
+    pendingCollectionState.requestKey="";
+    pendingCollectionState.request=null;
+    if(pendingCollectionState.cache?.clear) pendingCollectionState.cache.clear();
+  }
+  if(typeof window.blacklistPageState!=='undefined' && window.blacklistPageState) window.blacklistPageState._cache=new Map();
+  if(typeof window.expiredPeoplePageState!=='undefined' && window.expiredPeoplePageState) window.expiredPeoplePageState._cache=new Map();
+
+  // Reload the currently visible page from the server. Other pages will also
+  // fetch fresh data the next time they are opened.
+  if(typeof currentPage==='string' && currentPage){
+    await renderPage(currentPage);
+  }
+}
+
 function schedulePaymentTotals(s){
   const seen=new Set(); let principalInterest=0, penalty=0;
   // Explicit scheduleId is authoritative. Only legacy payments without a scheduleId
