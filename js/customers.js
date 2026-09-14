@@ -158,11 +158,16 @@ function renderRegistration(c){
     </div></div>
     <div class="actions"><button class="btn" type="reset">Clear</button><button class="btn primary" type="submit">Save Customer</button></div>
   </form>`;
-  document.getElementById("customerForm").onsubmit=e=>{
+  document.getElementById("customerForm").onsubmit=async e=>{
     e.preventDefault();const f=new FormData(e.target),o=Object.fromEntries(f.entries());
     o.state="Maharashtra"; o.taluka="";
     const errors=validateCustomerInput(o); if(errors.length){toast(errors[0],"err");return;}
-    o.id=nextCustomerId();o.ownerId=getCurrentUser()?.id||"ADMIN";o.createdAt=new Date().toISOString();o.activityCreatedAt=o.createdAt;db.customers.push(o);save();toast("Customer created successfully");e.target.reset();openPage("customers");
+    try{
+      // Registration is intentionally lazy on page load. Hydrate the full
+      // legacy data only at the point where we actually need to append/save.
+      await ensureServerDataLoaded();
+      o.id=nextCustomerId();o.ownerId=getCurrentUser()?.id||"ADMIN";o.createdAt=new Date().toISOString();o.activityCreatedAt=o.createdAt;db.customers.push(o);save();toast("Customer created successfully");e.target.reset();openPage("customers");
+    }catch(err){console.error(err);toast(err.message||"Could not save customer","err");}
   }
 }
 function fg(label,name,type="text",required=false,span=1){return `<div class="form-group ${span===2?"span-2":span===3?"span-3":""}"><label>${label}${required?" *":""}</label>${type==="textarea"?`<textarea name="${name}" ${required?"required":""}></textarea>`:`<input name="${name}" type="${type}" ${required?"required":""}/>`}</div>`}

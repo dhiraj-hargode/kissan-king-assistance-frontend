@@ -90,6 +90,14 @@ async function renderPage(page){
     return;
   }
 
+  // New Registration is a form-only page. Do not hydrate the complete JSONB
+  // database just to display the form. The submit handler loads data only
+  // when it actually needs to create the customer.
+  if(page==='registration'){
+    try{ renderRegistration(c); }catch(e){ console.error(e); c.innerHTML=header('New Registration','Could not load registration form.',`<button class="btn" onclick="renderPage('registration')">↻ Retry</button>`)+`<div class="empty"><h3>Page unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`; }
+    return;
+  }
+
   await ensureServerDataLoaded();
   normalizeMonthlyDueDates();
   const generated=ensureLegacyOperationalSchedules(todayISO());
