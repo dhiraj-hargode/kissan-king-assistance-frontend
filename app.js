@@ -33,7 +33,7 @@ if(sidebarCollapseBtn){
 }
 
 document.getElementById("globalSearch").addEventListener("input",e=>{
-  const q=e.target.value.trim().toLowerCase(); if(!q)return;
+  const q=e.target.value.trim().toLowerCase();
   renderSearchResults(q);
 });
 normalizeMonthlyDueDates();

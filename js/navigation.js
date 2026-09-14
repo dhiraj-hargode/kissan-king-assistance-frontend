@@ -72,6 +72,24 @@ async function renderPage(page){
     return;
   }
 
+  // Read-heavy reporting/admin lists use targeted APIs and must not hydrate
+  // the complete JSONB database just to open the page.
+  if(['reports','analytics','blacklist','expired'].includes(page)){
+    try{
+      const renderer={reports:renderReports,analytics:renderAnalytics,blacklist:renderBlacklist,expired:renderExpired}[page];
+      await renderer(c);
+    }catch(e){
+      console.error(e);
+      c.innerHTML=header(page==='reports'?'All Year Revenue':page==='analytics'?'Graphs & Analytics':page==='blacklist'?'Blacklisted Customers':'Overdue Loans','Could not load page.',`<button class="btn" onclick="renderPage('${page}')">↻ Retry</button>`)+`<div class="empty"><h3>Page unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;
+    }
+    return;
+  }
+
+  if(page==='expiredPeople'){
+    try{ await renderExpiredPeople(c); }catch(e){ console.error(e); c.innerHTML=header('Expired People','Could not load expired people.',`<button class="btn" onclick="renderPage('expiredPeople')">↻ Retry</button>`)+`<div class="empty"><h3>Page unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`; }
+    return;
+  }
+
   await ensureServerDataLoaded();
   normalizeMonthlyDueDates();
   const generated=ensureLegacyOperationalSchedules(todayISO());

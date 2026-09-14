@@ -1,99 +1,31 @@
-// Reports and analytics features.
-function paymentTotalsForMonth(key){
-  return reportPayments().filter(p=>String(p.date).slice(0,7)===key).reduce((a,p)=>({
-    principal:a.principal+Number(p.principal||0),
-    interest:a.interest+Number(p.interest||0),
-    penalty:a.penalty+Number(p.penalty||0),
-    total:a.total+Number(p.total||0)
-  }),{principal:0,interest:0,penalty:0,total:0});
+// Reports and analytics now use server-side aggregation. The browser receives
+// only the selected year's KPIs/monthly rows instead of the full payment ledger.
+let reportsPageRequest=null;
+let analyticsPageRequest=null;
+async function renderReports(c){
+  const stored=Number(sessionStorage.getItem('kkRevenueYear'))||0;
+  c.innerHTML=header('All Year Revenue','Loading selected-year revenue…','');
+  try{
+    const x=await apiJSON(`/api/reports?year=${stored||''}`);
+    const year=Number(x.year),years=Array.isArray(x.years)?x.years:[year],rows=Array.isArray(x.rows)?x.rows:[],summary=x.summary||{};
+    sessionStorage.setItem('kkRevenueYear',String(year));
+    c.innerHTML=header('All Year Revenue',`Actual revenue from recorded payments only. Showing ${year} data.`,`<select class="year-select" aria-label="Revenue year" onchange="sessionStorage.setItem('kkRevenueYear',this.value);renderPage('reports')">${years.map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select><button class="btn" onclick="window.print()">🖨 Print</button>`);
+    c.innerHTML+=`<div class="stat-grid">${stat('Total Interest',money(summary.totalInterest||0),`Actual interest received in ${year}`)}${stat('Months',12,'Calendar months in selected year')}${stat('Total Payments',summary.paymentCount||0,`Recorded payment entries in ${year}`)}${stat('Total Collection',money(summary.totalCollection||0),'Principal + interest + penalty')}</div>`;
+    c.innerHTML+=`<div class="card section-card" style="margin-top:18px"><div class="table-wrap"><table class="data-table"><thead><tr><th>Year</th><th>Month</th><th>Total Principal</th><th>Total Interest</th><th>Total Penalty</th><th>Total Collection</th></tr></thead><tbody>${rows.map(r=>`<tr><td><b>${year}</b></td><td>${esc(r.label||'')}</td><td>${money(r.principal||0)}</td><td><b>${money(r.interest||0)}</b></td><td>${money(r.penalty||0)}</td><td><b>${money(r.total||0)}</b></td></tr>`).join('')}</tbody></table></div><div class="report-year-summary"><span>Total principal: <b>${money(summary.totalPrincipal||0)}</b></span><span>Total interest: <b>${money(summary.totalInterest||0)}</b></span><span>Total penalty: <b>${money(summary.totalPenalty||0)}</b></span><span>Total collection: <b>${money(summary.totalCollection||0)}</b></span></div></div>`;
+  }catch(e){c.innerHTML=header('All Year Revenue','Could not load report.',`<button class="btn" onclick="renderPage('reports')">↻ Retry</button>`)+`<div class="empty"><h3>Report unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;}
 }
-function monthKeyLocal(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
-function renderReports(c){
-  // All Year Revenue is now year-selectable, using the same year universe as
-  // Graphs & Analytics. Every KPI and every monthly row is restricted to the
-  // selected calendar year. Revenue is based only on actual recorded payments.
-  const years=analyticsYears();
-  const storedYear=Number(sessionStorage.getItem("kkRevenueYear"));
-  const year=years.includes(storedYear)?storedYear:years[0];
-  sessionStorage.setItem("kkRevenueYear",String(year));
-
-  const rows=Array.from({length:12},(_,i)=>{
-    const key=`${year}-${String(i+1).padStart(2,"0")}`;
-    const d=new Date(year,i,1);
-    const t=paymentTotalsForMonth(key);
-    return {year,month:d.toLocaleString("en-IN",{month:"long"}),...t};
-  });
-
-  const yearPayments=reportPayments().filter(p=>String(p.date).slice(0,4)===String(year));
-  const totalInterest=yearPayments.reduce((a,p)=>a+Number(p.interest||0),0);
-  const totalCollection=yearPayments.reduce((a,p)=>a+Number(p.total||0),0);
-  const totalPrincipal=yearPayments.reduce((a,p)=>a+Number(p.principal||0),0);
-  const totalPenalty=yearPayments.reduce((a,p)=>a+Number(p.penalty||0),0);
-
-  c.innerHTML=header(
-    "All Year Revenue",
-    `Actual revenue from recorded payments only. Showing ${year} data.`,
-    `<select class="year-select" aria-label="Revenue year" onchange="sessionStorage.setItem('kkRevenueYear',this.value);renderPage('reports')">${years.map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join("")}</select><button class="btn" onclick="window.print()">🖨 Print</button>`
-  );
-
-  c.innerHTML+=`<div class="stat-grid">${stat("Total Interest",money(totalInterest),`Actual interest received in ${year}`)}${stat("Months",12,"Calendar months in selected year")}${stat("Total Payments",yearPayments.length,`Recorded payment entries in ${year}`)}${stat("Total Collection",money(totalCollection),"Principal + interest + penalty")}</div>`;
-
-  c.innerHTML+=`<div class="card section-card" style="margin-top:18px"><div class="table-wrap"><table class="data-table"><thead><tr><th>Year</th><th>Month</th><th>Total Principal</th><th>Total Interest</th><th>Total Penalty</th><th>Total Collection</th></tr></thead><tbody>${rows.map(r=>`<tr><td><b>${r.year}</b></td><td>${esc(r.month)}</td><td>${money(r.principal)}</td><td><b>${money(r.interest)}</b></td><td>${money(r.penalty)}</td><td><b>${money(r.total)}</b></td></tr>`).join("")}</tbody></table></div><div class="report-year-summary"><span>Total principal: <b>${money(totalPrincipal)}</b></span><span>Total interest: <b>${money(totalInterest)}</b></span><span>Total penalty: <b>${money(totalPenalty)}</b></span><span>Total collection: <b>${money(totalCollection)}</b></span></div></div>`;
-}
-function analyticsYears(){
-  const ys=new Set();
-  const addYear=value=>{const m=String(value||"").match(/^(\d{4})-/);if(m)ys.add(Number(m[1]));};
-  // The year selector represents the reporting year. Include every year that
-  // can contribute to this page so changing the selector never mixes years.
-  db.customers.forEach(c=>addYear(c.createdAt||c.activityCreatedAt));
-  db.loans.forEach(l=>{addYear(l.startDate||l.loanDate);addYear(l.createdAt||l.activityCreatedAt);});
-  db.payments.forEach(p=>addYear(p.date));
-  db.loans.forEach(l=>{const d=loanCompletionDate(l);if(d)addYear(d);});
-  if(!ys.size)ys.add(new Date().getFullYear());
-  return [...ys].sort((a,b)=>b-a);
-}
-function analyticsData(year){
-  const months=Array.from({length:12},(_,i)=>{
-    const key=`${year}-${String(i+1).padStart(2,"0")}`;
-    const loans=db.loans.filter(l=>String(l.startDate||l.loanDate||"").startsWith(key));
-    const pays=reportPayments().filter(p=>String(p.date).startsWith(key));
-    return {month:i+1,label:new Date(year,i,1).toLocaleString("en-IN",{month:"short"}),investment:loans.reduce((a,l)=>a+Number(l.amount||0),0),interest:pays.reduce((a,p)=>a+Number(p.interest||0),0),penalty:pays.reduce((a,p)=>a+Number(p.penalty||0),0)};
-  });
-  return {months,investment:months.reduce((a,m)=>a+m.investment,0),interest:months.reduce((a,m)=>a+m.interest,0),penalty:months.reduce((a,m)=>a+m.penalty,0)};
-}
-function loanCompletionDate(yearLoan){
-  const l=yearLoan;
-  if(l.completedAt&&/^\d{4}-\d{2}-\d{2}/.test(String(l.completedAt))) return String(l.completedAt).slice(0,10);
-  const target=Math.max(0,Number(l.amount||0));
-  if(target<=0) return null;
-  let principal=0,lastDate=null;
-  const pays=loanPayments(l.id).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-  for(const p of pays){
-    principal+=Number(p.principal||0);
-    if(principal>=target-0.005){lastDate=p.date;break;}
-  }
-  return lastDate;
-}
-function analyticsActivityData(year){
-  const selectedYear=Number(year);
-  // All activity counts are calculated independently from the selected year.
-  // New users = registration year; New loans = loan/start date year;
-  // Completed loans = the year the loan principal actually reached zero.
-  const newCustomers=db.customers.filter(c=>Number(String(c.createdAt||c.activityCreatedAt||'').slice(0,4))===selectedYear).length;
-  const newLoans=db.loans.filter(l=>Number(String(l.startDate||l.loanDate||'').slice(0,4))===selectedYear).length;
-  const completedLoans=db.loans.filter(l=>{const d=loanCompletionDate(l);return d&&Number(String(d).slice(0,4))===selectedYear;}).length;
-  return {newCustomers,newLoans,completedLoans};
-}
-function renderAnalytics(c){
-  const years=analyticsYears();
-  const storedYear=Number(sessionStorage.getItem("kkAnalyticsYear"));
-  const year=years.includes(storedYear)?storedYear:years[0];
-  sessionStorage.setItem("kkAnalyticsYear",String(year));
-  const data=analyticsData(year),activity=analyticsActivityData(year);
-  c.innerHTML=header("Graphs & Analytics","Annual loan, interest and penalty analysis. Monthly Report contains the detailed monthly table.",`<select class="year-select" onchange="sessionStorage.setItem('kkAnalyticsYear',this.value);renderPage('analytics')">${years.map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join("")}</select>`);
-  c.innerHTML+=`<div class="analytics-top"><div class="analytics-card"><div class="analytics-icon">₹</div><div><span>Investment</span><b>${money(data.investment)}</b><small>Loans issued in ${year}</small></div></div><div class="analytics-card"><div class="analytics-icon">%</div><div><span>Interest</span><b>${money(data.interest)}</b><small>Actual interest received</small></div></div><div class="analytics-card"><div class="analytics-icon">⚠</div><div><span>Penalty</span><b>${money(data.penalty)}</b><small>Actual penalty received</small></div></div><div class="card analytics-status analytics-activity"><h3>Activity — ${year}</h3>${renderActivityChart(activity)}</div></div>`;
-  c.innerHTML+=`<div class="card section-card analytics-chart-card"><div class="section-head"><div><h3>Chart Analysis — ${year}</h3><p>Monthly loan investment compared with actual interest and penalty received.</p></div></div>${renderAnnualAnalysisChart(data.months)}</div>`;
-  c.innerHTML+=`<div class="analytics-note"><b>Reporting rule:</b> Investment is based on loans issued in the selected year. Interest and penalty are based only on actual recorded payments. Completed loans are counted in the year their principal was fully paid. Detailed monthly totals are available under <b>Monthly Report</b>.</div>`;
+async function renderAnalytics(c){
+  const stored=Number(sessionStorage.getItem('kkAnalyticsYear'))||0;
+  c.innerHTML=header('Graphs & Analytics','Loading analytics…','');
+  try{
+    const x=await apiJSON(`/api/analytics?year=${stored||''}`),year=Number(x.year),years=Array.isArray(x.years)?x.years:[year],s=x.summary||{},months=Array.isArray(x.months)?x.months:[],activity=x.activity||{};
+    sessionStorage.setItem('kkAnalyticsYear',String(year));
+    const data={investment:Number(s.investment||0),interest:Number(s.interest||0),penalty:Number(s.penalty||0),months};
+    c.innerHTML=header('Graphs & Analytics','Annual loan, interest and penalty analysis. Monthly Report contains the detailed monthly table.',`<select class="year-select" onchange="sessionStorage.setItem('kkAnalyticsYear',this.value);renderPage('analytics')">${years.map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select>`);
+    c.innerHTML+=`<div class="analytics-top"><div class="analytics-card"><div class="analytics-icon">₹</div><div><span>Investment</span><b>${money(data.investment)}</b><small>Loans issued in ${year}</small></div></div><div class="analytics-card"><div class="analytics-icon">%</div><div><span>Interest</span><b>${money(data.interest)}</b><small>Actual interest received</small></div></div><div class="analytics-card"><div class="analytics-icon">⚠</div><div><span>Penalty</span><b>${money(data.penalty)}</b><small>Actual penalty received</small></div></div><div class="card analytics-status analytics-activity"><h3>Activity — ${year}</h3>${renderActivityChart(activity)}</div></div>`;
+    c.innerHTML+=`<div class="card section-card analytics-chart-card"><div class="section-head"><div><h3>Chart Analysis — ${year}</h3><p>Monthly loan investment compared with actual interest and penalty received.</p></div></div>${renderAnnualAnalysisChart(data.months)}</div>`;
+    c.innerHTML+=`<div class="analytics-note"><b>Reporting rule:</b> Investment is based on loans issued in the selected year. Interest and penalty are based only on actual recorded payments. Completed loans are counted in the year their principal was fully paid. Detailed monthly totals are available under <b>Monthly Report</b>.</div>`;
+  }catch(e){c.innerHTML=header('Graphs & Analytics','Could not load analytics.',`<button class="btn" onclick="renderPage('analytics')">↻ Retry</button>`)+`<div class="empty"><h3>Analytics unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;}
 }
 function renderActivityChart(data){
   const items=[["New Customers",data.newCustomers],["New Loans",data.newLoans],["Completed Loans",data.completedLoans]],max=Math.max(...items.map(x=>x[1]),1);
