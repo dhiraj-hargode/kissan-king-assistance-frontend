@@ -8,16 +8,6 @@ function openPage(page){
     window.pendingFilter='';
   }
   if(page==='pending') delete window.pendingPreserveFilter;
-
-  // Normal Payment History navigation must always open the complete history.
-  // A customer/loan-specific history is allowed only when the caller
-  // explicitly sets historyPreserveFilter (see openPaymentHistory()).
-  if(page==='history' && !window.historyPreserveFilter){
-    window.historyCustomerId=null;
-    window.historyLoanId=null;
-  }
-  if(page==='history') delete window.historyPreserveFilter;
-
   currentPage=page;
   document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   renderPage(page)

@@ -29,7 +29,7 @@ async function openPaymentFor(loanId,scheduleId=null,defaultPaymentDate=null){
     return;
   }
   openModal("Record Payment",`<div class="kpi-row"><div class="kpi"><b>${esc(customerName(c))}</b><span>Customer</span></div><div class="kpi"><b>${l.id}</b><span>Loan</span></div><div class="kpi"><b>${money(loanOutstanding(l))}</b><span>Outstanding Principal</span></div><div class="kpi"><b>${money(dueAmount(s))}</b><span>Current Due</span></div></div><hr>
-  <form id="payForm"><div class="form-grid">${fg("Payment Date","date","date",true)}${fg("Principal","principal","number",true)}${fg("Interest","interest","number",true)}${fg("Penalty","penalty","number")}${fg("Payment Mode","mode","text",true)}${fg("Notes","notes")}</div><div class="notice">Installment due: <b>${fmtDate(s.dueDate)}</b>. Remaining installment amount: <b>${money(dueAmount(s))}</b>.</div></form>`,
+  <form id="payForm"><div class="form-grid">${fg("Payment Date","date","date",true)}${fg("Principal","principal","number",true)}${fg("Interest","interest","number",true)}${fg("Penalty","penalty","number")}${fg("Payment Mode","mode","text",true)}${fg("Notes","notes")}</div><div class="notice">Installment due: <b>${fmtDate(s.dueDate)}</b>. Remaining installment amount: <b>${money(dueAmount(s))}</b>. <span style="display:block;margin-top:4px">You may pay extra <b>principal</b>; the extra principal reduces future EMI amounts.</span></div></form>`,
   `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn" type="button" onclick="calculatePaymentAmounts('${l.id}','${s.id}')">🧮 Calculate</button><button class="btn primary" onclick="savePayment('${l.id}','${s.id}')">Save Payment</button>`);
   const f=document.getElementById("payForm");
   // Context-aware Payment Date. Do NOT use today's date for Collection/Pending.
@@ -88,6 +88,8 @@ async function savePayment(loanId,scheduleId){
   const errors=validatePaymentInput(o,l,s);
   if(errors.length){toast(errors[0],"err");return;}
   const principal=Number(o.principal||0),interest=Number(o.interest||0),penalty=Number(o.penalty||0),total=principal+interest+penalty;
+  const scheduledPrincipalBeforePayment=Math.max(0,schedulePrincipalDue(s));
+  const extraPrincipal=Math.max(0,principal-scheduledPrincipalBeforePayment);
   const payment={id:uid("PAY"),loanId:l.id,scheduleId:s.id,date:o.date,principal,interest,penalty,total,mode:cleanText(o.mode,50),notes:cleanText(o.notes,1000),createdAt:new Date().toISOString(),activityCreatedAt:new Date().toISOString()};
   db.payments.push(payment);
   s.paid=Number(s.paid||0)+principal+interest;
@@ -100,6 +102,10 @@ async function savePayment(loanId,scheduleId){
   // Every unpaid future cycle must use the NEW remaining principal as its
   // interest base. This applies to both new and legacy/reconstructed loans.
   recalculateFutureInterest(l.id);
+  // If the customer paid more principal than this installment required, keep
+  // the original tenure but redistribute the remaining principal across the
+  // future unpaid EMIs so their amounts become smaller.
+  if(extraPrincipal>0.005) rebalanceFutureEmis(l.id,s.id);
   // Interest-only loans continue month-to-month until principal is actually
   // repaid. Create the next cycle immediately after the current cycle is paid.
   if(String(l.emiOption||"YES").toUpperCase()==="NO" && loanOutstanding(l)>0.005 && s.status==="PAID"){
@@ -154,9 +160,6 @@ async function showSchedule(loanId){
 function openPaymentHistory(customerId=null, loanId=null){
   window.historyCustomerId=customerId||null;
   window.historyLoanId=loanId||null;
-  // Tell openPage() that this navigation intentionally carries a
-  // customer/loan filter. Generic History navigation will clear it.
-  window.historyPreserveFilter=Boolean(customerId||loanId);
   openPage("history");
 }
 let paymentHistoryState={page:1,limit:50,search:"",from:"",to:"",mode:"",customerId:"",loanId:"",total:0,totalPages:1,loading:false};
@@ -218,17 +221,7 @@ function renderPaymentHistory(c){
   const customerId=window.historyCustomerId||"";
   const loanId=window.historyLoanId||"";
   paymentHistoryState={page:1,limit:50,search:"",from:"",to:"",mode:"",customerId:String(customerId),loanId:String(loanId),total:0,totalPages:1,loading:false};
-  // Keep the visible search box in sync with the filter applied to the API.
-  // Customer history shows the customer name when available; loan history
-  // shows the loan ID. This prevents a hidden customerId/loanId filter from
-  // being active while the search box appears empty.
-  let initialQuery="";
-  if(customerId){
-    const cu=Array.isArray(db?.customers) ? db.customers.find(x=>String(x?.id)===String(customerId)) : null;
-    initialQuery=cu ? (customerName(cu)||String(customerId)) : String(customerId);
-  }else if(loanId){
-    initialQuery=String(loanId);
-  }
+  const initialQuery=loanId?String(loanId):"";
   c.innerHTML=header("Payment History","Complete transaction history with customer, loan and date filters.",`<button class="btn" onclick="printPaymentHistory()">🖨 Print</button><button class="btn primary" onclick="openPage('payment')">＋ Add Payment</button>`);
   c.innerHTML+=`<div class="card section-card history-filter-card"><div class="toolbar history-toolbar">
     <input class="grow" id="historySearch" placeholder="Search customer, mobile, Khata / loan ID..." value="${esc(initialQuery)}" oninput="paymentHistoryFilterChanged()">

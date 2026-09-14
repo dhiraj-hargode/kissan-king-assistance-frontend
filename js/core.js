@@ -73,7 +73,33 @@ function syncDistrictPincode(form){
 }
 function validateCustomerInput(o,editingId=null){const errors=[];if(!cleanText(o.firstName,100))errors.push("First name is required.");if(!validMobile(o.mobile,true))errors.push("Enter a valid 10-digit Indian mobile number.");if(!cleanText(o.city||o.village,100))errors.push("City is required.");if(!cleanText(o.district,100))errors.push("District is required.");if(o.homeNumber&&!validMobile(o.homeNumber,false))errors.push("Enter a valid alternate mobile number.");if(o.guarantorMobile&&!validMobile(o.guarantorMobile,false))errors.push("Enter a valid guarantor mobile number.");if(o.pincode&&!/^\d{6}$/.test(String(o.pincode).trim()))errors.push("Pincode must be 6 digits.");const mobile=String(o.mobile||"").trim();if(db.customers.some(c=>String(c.id)!==String(editingId||"")&&String(c.mobile||"").trim()===mobile))errors.push("Another customer already uses this mobile number.");return errors;}
 function validateLoanInput(o,customerId){const errors=[],amount=Number(o.amount),rate=Number(o.interestRate),duration=Number(o.duration),dueDay=Number(o.dueDay),penalty=Number(o.penalty||0);if(!customerId||!db.customers.some(c=>String(c.id)===String(customerId)))errors.push("Valid customer selection is required.");if(!cleanText(o.khataNo,50))errors.push("Khata No is required.");if(!cleanText(o.loanType,100))errors.push("Loan Type is required.");if(!cleanText(o.loanAgainst,100))errors.push("Loan Against is required.");if(!["YES","NO"].includes(String(o.emiOption||"").toUpperCase()))errors.push("Select EMI Option YES or NO.");if(!positiveNumber(amount))errors.push("Loan amount must be greater than zero.");if(!Number.isFinite(rate)||rate<0||rate>100)errors.push("Monthly interest must be between 0 and 100%.");if(String(o.emiOption||"").toUpperCase()==="YES" && (!Number.isInteger(duration)||duration<1||duration>240))errors.push("Duration must be a whole number between 1 and 240 months for EMI loans.");if(!Number.isInteger(dueDay)||dueDay<1||dueDay>31)errors.push("Due day must be between 1 and 31.");if(!validISODate(o.startDate))errors.push("Enter a valid loan apply date.");if(!["Flat Monthly","Reducing Balance"].includes(String(o.method||"")))errors.push("Select a valid interest method.");if(!nonNegativeNumber(penalty))errors.push("Penalty cannot be negative.");const duplicate=db.loans.some(l=>String(l.id)!==String(o.loanId||"")&&String(l.khataNo||l.legacyKhataNo||"").trim().toLowerCase()===String(o.khataNo||"").trim().toLowerCase());if(duplicate)errors.push("This Khata No is already assigned to another loan.");return errors;}
-function validatePaymentInput(o,loan,schedule){const errors=[],principal=Number(o.principal||0),interest=Number(o.interest||0),penalty=Number(o.penalty||0),total=principal+interest+penalty;if(!loan)errors.push("Loan not found.");if(!schedule)errors.push("Installment not found.");if(loan&&schedule&&String(schedule.loanId)!==String(loan.id))errors.push("Selected installment does not belong to this loan.");if(!validISODate(o.date))errors.push("Enter a valid payment date.");if(loan&&validISODate(o.date)&&validISODate(loan.startDate)&&o.date<loan.startDate)errors.push("Payment date cannot be before the loan start date.");if(validISODate(o.date)&&o.date>todayISO())errors.push("Payment date cannot be in the future.");if(!Number.isFinite(principal)||principal<0)errors.push("Principal cannot be negative.");if(!Number.isFinite(interest)||interest<0)errors.push("Interest cannot be negative.");if(!Number.isFinite(penalty)||penalty<0)errors.push("Penalty cannot be negative.");if(principal>0&&loan&&principal>loanOutstanding(loan)+0.005)errors.push("Principal payment cannot exceed the remaining loan balance.");if(schedule&&total>effectiveDueAmount(schedule)+0.005)errors.push(`Payment exceeds the current installment due (${money(effectiveDueAmount(schedule))}).`);if(total<=0)errors.push("Payment amount must be greater than zero.");if(!cleanText(o.mode,50))errors.push("Payment mode is required.");return errors;}
+function validatePaymentInput(o,loan,schedule){
+  const errors=[],principal=Number(o.principal||0),interest=Number(o.interest||0),penalty=Number(o.penalty||0),total=principal+interest+penalty;
+  if(!loan)errors.push("Loan not found.");
+  if(!schedule)errors.push("Installment not found.");
+  if(loan&&schedule&&String(schedule.loanId)!==String(loan.id))errors.push("Selected installment does not belong to this loan.");
+  if(!validISODate(o.date))errors.push("Enter a valid payment date.");
+  if(loan&&validISODate(o.date)&&validISODate(loan.startDate)&&o.date<loan.startDate)errors.push("Payment date cannot be before the loan start date.");
+  if(validISODate(o.date)&&o.date>todayISO())errors.push("Payment date cannot be in the future.");
+  if(!Number.isFinite(principal)||principal<0)errors.push("Principal cannot be negative.");
+  if(!Number.isFinite(interest)||interest<0)errors.push("Interest cannot be negative.");
+  if(!Number.isFinite(penalty)||penalty<0)errors.push("Penalty cannot be negative.");
+  if(principal>0&&loan&&principal>loanOutstanding(loan)+0.005)errors.push("Principal payment cannot exceed the remaining loan balance.");
+  // Extra principal is intentionally allowed. The old rule rejected any
+  // payment whose total exceeded the current EMI. A customer may now pay the
+  // normal installment plus additional principal, which is applied to the
+  // outstanding loan and reduces future EMI amounts.
+  if(schedule){
+    const interestDue=scheduleInterestDue(schedule);
+    if(interest>interestDue+0.005)errors.push(`Interest cannot exceed the remaining installment interest (${money(interestDue)}).`);
+    // Penalty is an additional late-payment charge and may legitimately make
+    // the total collection higher than the scheduled EMI. Do not cap it to
+    // the schedule's original penalty value.
+  }
+  if(total<=0)errors.push("Payment amount must be greater than zero.");
+  if(!cleanText(o.mode,50))errors.push("Payment mode is required.");
+  return errors;
+}
 function validateDatabaseIntegrity(){const issues=[],ids=new Set();if(!db||!Array.isArray(db.customers)||!Array.isArray(db.loans)||!Array.isArray(db.schedules)||!Array.isArray(db.payments)||!Array.isArray(db.blacklist))return ["Database structure is invalid."];db.customers.forEach(c=>{if(ids.has(String(c.id)))issues.push(`Duplicate customer ID: ${c.id}`);ids.add(String(c.id));if(!String(c.firstName||"").trim())issues.push(`Customer ${c.id} has no first name.`);});const customerIds=new Set(db.customers.map(c=>String(c.id))),loanIds=new Set();db.loans.forEach(l=>{if(loanIds.has(String(l.id)))issues.push(`Duplicate loan ID: ${l.id}`);loanIds.add(String(l.id));if(!customerIds.has(String(l.customerId)))issues.push(`Loan ${l.id} references missing customer ${l.customerId}.`);if(!positiveNumber(l.amount))issues.push(`Loan ${l.id} has invalid amount.`);if(!validISODate(l.startDate))issues.push(`Loan ${l.id} has invalid start date.`);});const scheduleIds=new Set();db.schedules.forEach(s=>{if(scheduleIds.has(String(s.id)))issues.push(`Duplicate schedule ID: ${s.id}`);scheduleIds.add(String(s.id));if(!loanIds.has(String(s.loanId)))issues.push(`Schedule ${s.id} references missing loan ${s.loanId}.`);if(!validISODate(s.dueDate))issues.push(`Schedule ${s.id} has invalid due date.`);if(Number(s.emi||0)<0||Number(s.principal||0)<0||Number(s.interest||0)<0||Number(s.penalty||0)<0)issues.push(`Schedule ${s.id} has a negative amount.`);});db.expiredCustomers.forEach(x=>{if(!customerIds.has(String(x.customerId)))issues.push(`Expired record ${x.id} references missing customer ${x.customerId}.`);});const paymentIds=new Set();db.payments.forEach(p=>{if(paymentIds.has(String(p.id)))issues.push(`Duplicate payment ID: ${p.id}`);paymentIds.add(String(p.id));const loan=loanIds.has(String(p.loanId));if(!loan)issues.push(`Payment ${p.id} references missing loan ${p.loanId}.`);if(!validISODate(p.date))issues.push(`Payment ${p.id} has invalid date.`);const principal=Number(p.principal||0),interest=Number(p.interest||0),penalty=Number(p.penalty||0),total=principal+interest+penalty;if([principal,interest,penalty,total].some(v=>!Number.isFinite(v)||v<0))issues.push(`Payment ${p.id} has invalid amounts.`);if(Math.abs(total-Number(p.total||0))>0.01)issues.push(`Payment ${p.id} total does not match its components.`);if(p.scheduleId&&!scheduleIds.has(String(p.scheduleId)))issues.push(`Payment ${p.id} references missing schedule ${p.scheduleId}.`);});return issues;}
 function blankDB(){return {customers:[],loans:[],schedules:[],payments:[],blacklist:[],notifications:[],deletedRecords:[],expiredCustomers:[],pendingQueue:[],settings:{appName:"Loan Management",currency:"INR",defaultInterest:2,defaultPenalty:0,reminderDays:[7,3,1,0],logoData:"",logoEnabled:true}}}
 function pendingQueue(){
@@ -497,6 +523,58 @@ function recalculateFutureInterest(loanId){
       s.status=effectiveScheduleStatus(s);
     }
     scheduledPrincipalBefore+=contractPrincipal;
+  });
+}
+
+// Rebalance future EMI amounts after a customer pays extra principal with an
+// installment. The extra amount is not lost: it reduces the outstanding loan
+// principal and the remaining principal is redistributed over the remaining
+// unpaid EMI cycles. This keeps the original tenure while lowering future EMI
+// amounts. Paid historical installments are never rewritten.
+function rebalanceFutureEmis(loanId,paidScheduleId){
+  const l=db.loans.find(x=>String(x.id)===String(loanId));
+  if(!l || String(l.emiOption||'YES').toUpperCase()==='NO') return;
+
+  const schedules=scheduleFor(l.id);
+  const current=schedules.find(x=>String(x.id)===String(paidScheduleId));
+  if(!current) return;
+
+  const currentBreakdown=schedulePaymentBreakdown(current);
+  const scheduledPrincipal=Math.max(0,Number(current.principal||0));
+  const extraPrincipal=Math.max(0,currentBreakdown.principal-scheduledPrincipal);
+  if(extraPrincipal<=0.005) return;
+
+  const n=Math.max(1,Number(l.duration)||schedules.length||1);
+  const future=schedules.filter(s=>{
+    const installment=Number(s.installment||0);
+    if(installment<=Number(current.installment||0) || installment>n) return false;
+    return effectiveDueAmount(s)>0.005;
+  });
+  if(!future.length) return;
+
+  let remainingPrincipal=Math.max(0,Number(loanOutstanding(l).toFixed(2)));
+  if(remainingPrincipal<=0.005){
+    future.forEach(s=>{s.principal=0;s.interest=0;s.emi=0;s.paid=0;s.status='PAID';removePendingQueueId(s);});
+    return;
+  }
+
+  const rate=Math.max(0,Number(l.interestRate||0))/100;
+  const method=String(l.method||'Flat Monthly');
+  const totalFuture=future.length;
+
+  future.forEach((s,index)=>{
+    const countLeft=totalFuture-index;
+    const principal=Number((index===totalFuture-1 ? remainingPrincipal : remainingPrincipal/countLeft).toFixed(2));
+    const opening=remainingPrincipal;
+    const interest=method==='Flat Monthly'
+      ? Number((Math.max(0,Number(l.amount||0))*rate).toFixed(2))
+      : Number((opening*rate).toFixed(2));
+    s.principal=principal;
+    s.interest=interest;
+    s.emi=Number((principal+interest).toFixed(2));
+    s.penalty=Math.max(0,Number(s.penalty||l.penalty||0));
+    s.status=effectiveScheduleStatus(s);
+    remainingPrincipal=Math.max(0,Number((remainingPrincipal-principal).toFixed(2)));
   });
 }
 
