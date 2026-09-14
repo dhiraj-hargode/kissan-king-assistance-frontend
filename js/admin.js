@@ -156,20 +156,44 @@ async function downloadPaymentsCSV(){
   }catch(e){toast(e.message||'CSV export failed','err');}
 }
 async function clearAllData(){
-  if(currentUser?.role!=="Administrator"){toast("Only Administrators can clear data.","err");return;}
-  const answer=prompt("This permanently clears ALL customers, loans, schedules, payments, blacklist, notifications, expired records and pending items on the server. Settings and administrator accounts are preserved. Type DELETE to continue:");
-  if(answer!=="DELETE"){toast("Data was not cleared.","err");return;}
+  if(currentUser?.role!=="Administrator"){
+    toast("Only Administrators can clear data.","err");
+    return;
+  }
+
+  const answer=prompt(
+    "This permanently clears ALL customers, loans, schedules, payments, blacklist, notifications, expired records and pending data.\n\nType DELETE to continue:"
+  );
+
+  if(answer!=="DELETE"){
+    toast("Data was not cleared.","err");
+    return;
+  }
+
   try{
-    const result=await apiJSON('/api/admin/clear-data',{method:'POST',body:JSON.stringify({confirm:'DELETE'})});
+    const result=await apiJSON('/api/admin/clear-data',{
+      method:'POST',
+      body:JSON.stringify({confirm:'DELETE'})
+    });
+
+    // Reset only the local application state.
     db=blankDB();
-    if(result?.preserved?.includes('settings')){
-      // The server preserved settings; force a fresh small-state read on the next page that needs it.
-      serverDataLoaded=false;
+    serverDataLoaded=false;
+
+    toast(
+      result?.message || "All business data cleared from the server database.",
+      "ok"
+    );
+
+    // Refresh only the current Backup / Export page.
+    const content=document.getElementById("content");
+    if(content){
+      await renderAdmin(content);
     }
-    toast("All business data cleared from the server database");
-    await openPage("dashboard");
+
   }catch(e){
-    toast(e.message||"Could not clear data","err");
+    console.error("Clear data failed:",e);
+    toast(e.message || "Could not clear data.","err");
   }
 }
 function restoreBackup(){if(currentUser?.role!=="Administrator"){toast("Only Administrators can restore backups.","err");return;}const f=document.getElementById("restoreFile").files[0];if(!f)return toast("Select a JSON backup file.","err");const r=new FileReader();r.onload=()=>{try{const x=JSON.parse(r.result);if(!x||!Array.isArray(x.customers)||!Array.isArray(x.loans)||!Array.isArray(x.schedules)||!Array.isArray(x.payments)||!Array.isArray(x.blacklist))throw new Error("structure");const previous=db;db=x;const issues=validateDatabaseIntegrity();if(issues.length){db=previous;toast(`Backup validation failed: ${issues[0]}`,"err");return;}db.settings={...(blankDB().settings||{}),...(x.settings||{})};save();toast("Backup validated and restored");renderPage("dashboard")}catch(e){toast("Invalid or incompatible backup file.","err")}};r.readAsText(f)}
