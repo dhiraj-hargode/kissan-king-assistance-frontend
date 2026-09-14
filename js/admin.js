@@ -106,9 +106,40 @@ function renderBackup(c){
   c.innerHTML+=`<div class="card section-card" style="margin-bottom:18px"><h3>✅ Server Database</h3><p id="backupDbSummary">Loading database summary…</p><p class="notice">Expired/deceased customers are archived separately without deleting their loans or payment history.</p></div>
   <div class="grid-2"><div class="card section-card"><h3>💾 Database Backup</h3><p>Download a full server database backup (Administrator only).</p><button class="btn primary" ${admin?'':'disabled'} onclick="downloadBackup()">Download JSON Backup</button></div><div class="card section-card"><h3>📄 Payment Export</h3><p>Export all payment transactions as CSV for Excel.</p><button class="btn primary" onclick="downloadPaymentsCSV()">Export Payments CSV</button></div></div>
   <div class="card section-card" style="margin-top:18px"><h3>📥 Import Excel</h3><p>Import customers, loans, payments and optional blacklist/expired test records from an Excel workbook. Only Administrators can import.</p><p class="notice"><b>Supported sheets:</b> Reviews, Customers, Loans, Payments, Blacklist / Blacklist_Test, Expired / Expired_Test. The importer validates dates, required fields, references and duplicate records before saving.</p><div class="form-grid"><div class="form-group span-2"><label>Excel File *</label><input type="file" id="excelImportFile" accept=".xlsx,.xls,.xlsm"></div><div class="form-group"><label>Import Mode *</label><select id="excelImportMode"><option value="add">Add / Merge</option><option value="replace">Replace Current Data</option></select></div></div><div class="actions" style="margin-top:12px"><button class="btn" ${admin?'':'disabled'} onclick="previewExcelImport()">🔎 Preview & Validate</button><button class="btn primary" ${admin?'':'disabled'} onclick="importExcelData()">📥 Import Excel</button></div><div id="excelImportResult" style="margin-top:14px"></div></div>
-  <div class="card section-card" style="margin-top:18px"><h3>Restore Backup</h3><p class="notice">Restoring replaces the current user data on the server. Use only a backup created by this application.</p><input type="file" id="restoreFile" accept=".json"><button class="btn" style="margin-top:10px" ${admin?'':'disabled'} onclick="restoreBackup()">Restore JSON Backup</button><hr style="margin:18px 0"><h3>Data Integrity</h3><p>Validate customer, loan, schedule, payment and blacklist references before backup/restore operations.</p><button class="btn" onclick="runDataValidation()">🔎 Validate Data</button><span id="validationResult" class="muted" style="margin-left:10px"></span><hr style="margin:18px 0"><h3>Danger Zone</h3><p>Clear all customers, loans, schedules and payments from the server database.</p><button class="btn danger" ${admin?'':'disabled'} onclick="clearAllData()">🗑 Clear All Data</button></div>`;
+  <div class="card section-card" style="margin-top:18px"><h3>Restore Backup</h3><p class="notice">Restoring replaces the current user data on the server. Use only a backup created by this application.</p><input type="file" id="restoreFile" accept=".json"><button class="btn" style="margin-top:10px" ${admin?'':'disabled'} onclick="restoreBackup()">Restore JSON Backup</button><hr style="margin:18px 0"><h3>Data Integrity</h3><p>Validate customer, loan, schedule, payment and blacklist references before backup/restore operations.</p><button class="btn" onclick="runDataValidation()">🔎 Validate Data</button><span id="validationResult" class="muted" style="margin-left:10px"></span></div>
+  <div class="card section-card" style="margin-top:18px"><h3>🚀 Phase 3 — PostgreSQL Migration</h3><p>Creates indexed PostgreSQL tables for customers, loans, schedules and payments. Your existing JSONB database is preserved as the source of truth during this phase.</p><p class="notice"><b>Safe migration:</b> this copies data only. It does not switch the application APIs yet.</p><div id="normalizedDbStatus" class="muted">Checking normalized database status…</div><div class="actions" style="margin-top:12px"><button class="btn" ${admin?'':'disabled'} onclick="migrateToNormalizedDb()">Migrate JSONB → PostgreSQL Tables</button><button class="btn" ${admin?'':'disabled'} onclick="loadNormalizedDbStatus()">Refresh Status</button></div></div>
+  <div class="card section-card" style="margin-top:18px"><h3>Danger Zone</h3><p>Clear all customers, loans, schedules and payments from the server database.</p><button class="btn danger" ${admin?'':'disabled'} onclick="clearAllData()">🗑 Clear All Data</button></div>`;
   loadBackupSummary();
+  loadNormalizedDbStatus();
 }
+async function loadNormalizedDbStatus(){
+  const el=document.getElementById('normalizedDbStatus'); if(!el)return;
+  try{
+    const x=await apiJSON('/api/admin/normalized-status');
+    const c=x.counts||{};
+    const migrated=x.migratedAt?`Migrated: ${new Date(x.migratedAt).toLocaleString('en-IN')}`:'Not migrated yet.';
+    el.innerHTML=`<b>${esc(migrated)}</b><br>Customers: ${Number(c.customers||0).toLocaleString('en-IN')} · Loans: ${Number(c.loans||0).toLocaleString('en-IN')} · Payments: ${Number(c.payments||0).toLocaleString('en-IN')} · Schedules: ${Number(c.schedules||0).toLocaleString('en-IN')}`;
+  }catch(e){el.textContent='Could not load normalized database status.';}
+}
+async function migrateToNormalizedDb(){
+  if(currentUser?.role!=='Administrator')return;
+  const answer=prompt('This copies the current JSONB business data into indexed PostgreSQL tables. Your existing JSONB data will NOT be changed. Type MIGRATE to continue:');
+  if(answer!=='MIGRATE'){toast('Migration was not started.','err');return;}
+  const buttons=[...document.querySelectorAll('button')].filter(b=>(b.textContent||'').includes('Migrate JSONB'));
+  buttons.forEach(b=>{b.disabled=true;b.textContent='⏳ Migrating…';});
+  const el=document.getElementById('normalizedDbStatus'); if(el)el.innerHTML='<span class="muted">Migrating data into PostgreSQL tables… Keep this page open.</span>';
+  try{
+    const x=await apiJSON('/api/admin/migrate-normalized',{method:'POST',body:JSON.stringify({confirm:'MIGRATE'})});
+    const c=x.counts||{};
+    if(el)el.innerHTML=`<span class="badge green">✓ Migration completed</span><br>Customers: ${Number(c.customers||0).toLocaleString('en-IN')} · Loans: ${Number(c.loans||0).toLocaleString('en-IN')} · Payments: ${Number(c.payments||0).toLocaleString('en-IN')} · Schedules: ${Number(c.schedules||0).toLocaleString('en-IN')}`;
+    toast('Phase 3.1 migration completed successfully');
+  }catch(e){
+    const details=e?.details?.length?`<br>${esc(e.details.slice(0,3).join(' | '))}`:'';
+    if(el)el.innerHTML=`<span class="badge red">Migration failed</span> ${esc(e.message||'Migration failed')}${details}`;
+    toast(e.message||'Migration failed','err');
+  }finally{buttons.forEach(b=>{b.disabled=false;b.textContent='Migrate JSONB → PostgreSQL Tables';});}
+}
+
 async function loadBackupSummary(){
   const el=document.getElementById('backupDbSummary'); if(!el)return;
   try{const x=await apiJSON('/api/backup/summary'); el.innerHTML=`Shared business database: <b>${Number(x.customers||0).toLocaleString('en-IN')}</b> customers, <b>${Number(x.loans||0).toLocaleString('en-IN')}</b> loans and <b>${Number(x.payments||0).toLocaleString('en-IN')}</b> payment entries. Expired customer records: <b>${Number(x.expiredCustomers||0).toLocaleString('en-IN')}</b>.`;}
