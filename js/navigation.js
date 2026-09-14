@@ -39,6 +39,16 @@ async function renderPage(page){
     return;
   }
 
+  if(page==='history'){
+    try{
+      await renderPaymentHistory(c);
+    }catch(e){
+      console.error(e);
+      c.innerHTML=header("Payment History","Could not load payment history.",`<button class="btn" onclick="renderPage('history')">↻ Retry</button>`)+`<div class="empty"><div class="emoji">⚠</div><h3>Payment History unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;
+    }
+    return;
+  }
+
   if(page==='loans'){
     try{
       await renderLoans(c);

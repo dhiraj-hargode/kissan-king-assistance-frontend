@@ -96,6 +96,7 @@ async function savePayment(loanId,scheduleId){
     });
   }
   await save();
+  if(typeof paymentHistoryCache!=='undefined') paymentHistoryCache.clear();
   const notificationsChanged=refreshNotifications();
   if(notificationsChanged) await save();
   updateNotifCount();
@@ -111,28 +112,109 @@ function openPaymentHistory(customerId=null, loanId=null){
   window.historyLoanId=loanId||null;
   openPage("history");
 }
+let paymentHistoryState={page:1,limit:50,search:"",from:"",to:"",mode:"",customerId:"",loanId:"",total:0,totalPages:1,loading:false};
+let paymentHistoryCache=new Map();
+let paymentHistoryInFlight=new Map();
+let paymentHistoryRequestToken=0;
+let paymentHistoryFilterTimer=null;
+
+function paymentHistoryParams(){
+  return new URLSearchParams({
+    page:String(paymentHistoryState.page),
+    limit:String(paymentHistoryState.limit),
+    search:paymentHistoryState.search,
+    from:paymentHistoryState.from,
+    to:paymentHistoryState.to,
+    mode:paymentHistoryState.mode,
+    customerId:paymentHistoryState.customerId,
+    loanId:paymentHistoryState.loanId
+  });
+}
+async function loadPaymentHistoryPage(page=paymentHistoryState.page){
+  const table=document.getElementById('historyTable'),sum=document.getElementById('historySummary');
+  if(!table||!sum)return;
+  paymentHistoryState.page=Math.max(1,Number(page)||1);
+  const params=paymentHistoryParams();
+  const key=params.toString();
+  const token=++paymentHistoryRequestToken;
+  paymentHistoryState.loading=true;
+  table.innerHTML=`<div class="empty"><div class="emoji">⏳</div><h3>Loading payments...</h3></div>`;
+  try{
+    let x=paymentHistoryCache.get(key);
+    if(!x){
+      if(paymentHistoryInFlight.has(key)) x=await paymentHistoryInFlight.get(key);
+      else{
+        const req=apiJSON(`/api/payments?${key}`);
+        paymentHistoryInFlight.set(key,req);
+        try{x=await req;}finally{paymentHistoryInFlight.delete(key);}
+      }
+      paymentHistoryCache.set(key,x);
+      if(paymentHistoryCache.size>8) paymentHistoryCache.delete(paymentHistoryCache.keys().next().value);
+    }
+    if(token!==paymentHistoryRequestToken)return;
+    const pg=x.pagination||{};
+    paymentHistoryState.page=Number(pg.page||1);
+    paymentHistoryState.total=Number(pg.total||0);
+    paymentHistoryState.totalPages=Number(pg.totalPages||1);
+    paymentHistoryState.loading=false;
+    const rows=Array.isArray(x.payments)?x.payments:[];
+    const s=x.summary||{};
+    sum.innerHTML=`<div class="stat-grid history-stats">${stat("Transactions",Number(s.transactions||0),"Matching payments")}${stat("Total Collection",money(s.totalCollection||0),"Principal + interest + penalty")}${stat("Loan Amount",money(s.loanAmount||0),Number(s.matchingLoans||0)===1?"Original loan amount":"Across matching loans")}${stat("Remaining",money(s.remaining||0),Number(s.matchingLoans||0)===1?"Outstanding principal":"Across matching loans")}${stat("Principal",money(s.principal||0),"Principal received")}${stat("Interest",money(s.interest||0),"Interest received")}${stat("Penalty",money(s.penalty||0),"Penalty received")}</div>`;
+    table.innerHTML=renderPaymentsTable(rows)+`<div class="toolbar" style="justify-content:space-between;margin-top:12px"><span class="muted">${paymentHistoryState.total?`Showing ${(paymentHistoryState.page-1)*paymentHistoryState.limit+1}-${Math.min(paymentHistoryState.page*paymentHistoryState.limit,paymentHistoryState.total)} of ${paymentHistoryState.total} payments`:`No payments found`}</span><div class="actions"><button class="btn" ${pg.hasPrevious?'':'disabled'} onclick="changePaymentHistoryPage(${paymentHistoryState.page-1})">← Previous</button><span class="muted">Page ${paymentHistoryState.page} of ${paymentHistoryState.totalPages}</span><button class="btn" ${pg.hasNext?'':'disabled'} onclick="changePaymentHistoryPage(${paymentHistoryState.page+1})">Next →</button></div></div>`;
+  }catch(e){
+    if(token!==paymentHistoryRequestToken)return;
+    paymentHistoryState.loading=false;
+    table.innerHTML=`<div class="empty"><div class="emoji">⚠</div><h3>Could not load payments</h3><p>${esc(e.message||'Request failed')}</p><button class="btn" onclick="loadPaymentHistoryPage(${paymentHistoryState.page})">↻ Retry</button></div>`;
+  }
+}
 function renderPaymentHistory(c){
   const customerId=window.historyCustomerId||"";
   const loanId=window.historyLoanId||"";
-  const selectedCustomer=db.customers.find(x=>String(x.id)===String(customerId));
-  const selectedLoan=db.loans.find(x=>String(x.id)===String(loanId));
-  const initialQuery=selectedLoan?selectedLoan.id:(selectedCustomer?customerName(selectedCustomer):"");
+  paymentHistoryState={page:1,limit:50,search:"",from:"",to:"",mode:"",customerId:String(customerId),loanId:String(loanId),total:0,totalPages:1,loading:false};
+  const initialQuery=loanId?String(loanId):"";
   c.innerHTML=header("Payment History","Complete transaction history with customer, loan and date filters.",`<button class="btn" onclick="printPaymentHistory()">🖨 Print</button><button class="btn primary" onclick="openPage('payment')">＋ Add Payment</button>`);
   c.innerHTML+=`<div class="card section-card history-filter-card"><div class="toolbar history-toolbar">
-    <input class="grow" id="historySearch" placeholder="Search customer, mobile, Khata / loan ID..." value="${esc(initialQuery)}" oninput="filterPaymentHistory()">
-    <input id="historyFrom" type="date" onchange="filterPaymentHistory()">
-    <input id="historyTo" type="date" onchange="filterPaymentHistory()">
-    <select id="historyMode" onchange="filterPaymentHistory()"><option value="">All Modes</option><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option><option>Other</option></select>
+    <input class="grow" id="historySearch" placeholder="Search customer, mobile, Khata / loan ID..." value="${esc(initialQuery)}" oninput="paymentHistoryFilterChanged()">
+    <input id="historyFrom" type="date" onchange="paymentHistoryFilterChanged()">
+    <input id="historyTo" type="date" onchange="paymentHistoryFilterChanged()">
+    <select id="historyMode" onchange="paymentHistoryFilterChanged()"><option value="">All Modes</option><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option><option>Other</option></select>
     <button class="btn" onclick="clearPaymentHistoryFilters()">Clear</button>
   </div></div><div id="historySummary"></div><div id="historyTable"></div>`;
-  filterPaymentHistory();
+  loadPaymentHistoryPage(1);
+}
+function paymentHistoryFilterChanged(){
+  paymentHistoryState.search=(document.getElementById("historySearch")?.value||"").trim();
+  paymentHistoryState.from=document.getElementById("historyFrom")?.value||"";
+  paymentHistoryState.to=document.getElementById("historyTo")?.value||"";
+  paymentHistoryState.mode=document.getElementById("historyMode")?.value||"";
+  paymentHistoryState.page=1;
+  clearTimeout(paymentHistoryFilterTimer);
+  paymentHistoryFilterTimer=setTimeout(()=>loadPaymentHistoryPage(1),300);
+}
+function filterPaymentHistory(){paymentHistoryFilterChanged();}
+async function changePaymentHistoryPage(page){
+  if(paymentHistoryState.loading)return;
+  const p=Math.max(1,Math.min(paymentHistoryState.totalPages,Number(page)||1));
+  await loadPaymentHistoryPage(p);
+}
+function clearPaymentHistoryFilters(){
+  ["historySearch","historyFrom","historyTo"].forEach(id=>{const e=document.getElementById(id);if(e)e.value=""});
+  const m=document.getElementById("historyMode");if(m)m.value="";
+  window.historyCustomerId=null;window.historyLoanId=null;
+  paymentHistoryState.customerId="";paymentHistoryState.loanId="";
+  paymentHistoryFilterChanged();
+}
+async function printPaymentHistory(){
+  await ensureServerDataLoaded();
+  const rows=paymentHistoryRows();
+  const body=`<h2>Payment History</h2><p>Generated: ${fmtDate(todayISO())}</p><table><thead><tr><th>Payment ID</th><th>Date</th><th>Customer</th><th>Loan / Khata</th><th>Principal</th><th>Interest</th><th>Penalty</th><th>Total</th><th>Mode</th></tr></thead><tbody>${rows.map(p=>{const l=db.loans.find(x=>String(x.id)===String(p.loanId)),cu=l&&db.customers.find(x=>String(x.id)===String(l.customerId));return `<tr><td>${esc(p.id)}</td><td>${fmtDate(p.date)}</td><td>${esc(customerName(cu||{}))}</td><td>${esc(l?.id||"")}</td><td>${money(p.principal)}</td><td>${money(p.interest)}</td><td>${money(p.penalty)}</td><td>${money(p.total)}</td><td>${esc(p.mode||"")}</td></tr>`}).join("")}</tbody></table>`;
+  printSection("Loan Management — Payment History",body);
 }
 function paymentHistoryRows(){
   const q=(document.getElementById("historySearch")?.value||"").trim().toLowerCase();
-  const from=document.getElementById("historyFrom")?.value||"", to=document.getElementById("historyTo")?.value||"", mode=document.getElementById("historyMode")?.value||"";
+  const from=document.getElementById("historyFrom")?.value||"",to=document.getElementById("historyTo")?.value||"",mode=document.getElementById("historyMode")?.value||"";
   return db.payments.filter(p=>{
-    const l=db.loans.find(x=>String(x.id)===String(p.loanId));
-    const cu=l&&db.customers.find(x=>String(x.id)===String(l.customerId));
+    const l=db.loans.find(x=>String(x.id)===String(p.loanId));const cu=l&&db.customers.find(x=>String(x.id)===String(l.customerId));
     const hay=[p.id,p.date,p.loanId,l?.customerId,customerName(cu||{}),cu?.mobile,cu?.reference,l?.legacyKhataNo,l?.khataNo].join(" ").toLowerCase();
     return (!q||hay.includes(q))&&(!from||p.date>=from)&&(!to||p.date<=to)&&(!mode||String(p.mode||"")===mode);
   }).sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.id).localeCompare(String(a.id)));
@@ -144,27 +226,16 @@ function paymentHistoryLoanSummary(rows){
   const remaining=loans.reduce((sum,l)=>sum+Math.max(0,loanOutstanding(l)),0);
   return {loanAmount,remaining,count:loans.length};
 }
-function filterPaymentHistory(){
-  const rows=paymentHistoryRows();
-  const total=rows.reduce((a,p)=>a+Number(p.total||0),0), principal=rows.reduce((a,p)=>a+Number(p.principal||0),0), interest=rows.reduce((a,p)=>a+Number(p.interest||0),0), penalty=rows.reduce((a,p)=>a+Number(p.penalty||0),0);
-  const loanSummary=paymentHistoryLoanSummary(rows);
-  const sum=document.getElementById("historySummary"), table=document.getElementById("historyTable"); if(!sum||!table)return;
-  const loanLabel=loanSummary.count===1?"Loan Amount":"Total Loan Amount";
-  const remainingLabel=loanSummary.count===1?"Remaining Principal":"Total Remaining";
-  sum.innerHTML=`<div class="stat-grid history-stats">${stat("Transactions",rows.length,"Matching payments")}${stat("Total Collection",money(total),"Principal + interest + penalty")}${stat("Loan Amount",money(loanSummary.loanAmount),loanSummary.count===1?"Original loan amount":"Across matching loans")}${stat("Remaining",money(loanSummary.remaining),loanSummary.count===1?"Outstanding principal":"Across matching loans")}${stat("Principal",money(principal),"Principal received")}${stat("Interest",money(interest),"Interest received")}${stat("Penalty",money(penalty),"Penalty received")}</div>`;
-  table.innerHTML=renderPaymentsTable(rows);
+
+async function viewPayment(id){
+  try{
+    const x=await apiJSON(`/api/payments/${encodeURIComponent(id)}`);
+    const p=x.payment,l=x.loan,cu=x.customer;
+    if(!p){toast("Payment not found.","err");return;}
+    openModal("Payment Details",`<div class="kpi-row"><div class="kpi"><b>${esc(p.id)}</b><span>Payment ID</span></div><div class="kpi"><b>${fmtDate(p.date)}</b><span>Payment Date</span></div><div class="kpi"><b>${esc(customerName(cu||{}))}</b><span>Customer</span></div><div class="kpi"><b>${money(p.total)}</b><span>Total Paid</span></div></div><hr><div class="detail-grid"><div><b>Loan / Khata</b><span>${esc(l?.legacyKhataNo||l?.khataNo||l?.id||"-")}</span></div><div><b>Principal</b><span>${money(p.principal)}</span></div><div><b>Interest</b><span>${money(p.interest)}</span></div><div><b>Penalty</b><span>${money(p.penalty)}</span></div><div><b>Payment Mode</b><span>${esc(p.mode||"-")}</span></div><div><b>Notes</b><span>${esc(p.notes||"-")}</span></div></div>`, `<button class="btn" onclick="closeModal()">Close</button><button class="btn primary" onclick="closeModal();editPayment('${esc(p.id)}')">✏ Edit Payment</button>${currentUser?.role==='Administrator'?`<button class="btn danger" onclick="confirmDeleteRecord('payment','${esc(p.id)}')">🗑 Delete Entry</button>`:`<button class="btn danger" disabled title="Only Administrators can delete records">🗑 Delete Entry</button>`}`);
+  }catch(e){toast(e.message||"Could not load payment details","err");}
 }
-function clearPaymentHistoryFilters(){
-  ["historySearch","historyFrom","historyTo"].forEach(id=>{const e=document.getElementById(id);if(e)e.value=""});
-  const m=document.getElementById("historyMode");if(m)m.value="";
-  window.historyCustomerId=null;window.historyLoanId=null;filterPaymentHistory();
-}
-function printPaymentHistory(){
-  const rows=paymentHistoryRows();
-  const remainingMap=paymentHistoryRemainingMap();
-  const body=`<h2>Payment History</h2><p>Generated: ${fmtDate(todayISO())}</p><table><thead><tr><th>Payment ID</th><th>Date</th><th>Customer</th><th>Loan / Khata</th><th>Principal</th><th>Interest</th><th>Penalty</th><th>Total</th><th>Mode</th></tr></thead><tbody>${rows.map(p=>{const l=db.loans.find(x=>String(x.id)===String(p.loanId)),cu=l&&db.customers.find(x=>String(x.id)===String(l.customerId));return `<tr><td>${esc(p.id)}</td><td>${fmtDate(p.date)}</td><td>${esc(customerName(cu||{}))}</td><td>${esc(l?.id||"")}</td><td>${money(p.principal)}</td><td>${money(p.interest)}</td><td>${money(p.penalty)}</td><td>${money(p.total)}</td><td>${esc(p.mode||"")}</td></tr>`}).join("")}</tbody></table>`;
-  printSection("Loan Management — Payment History",body);
-}
+
 function renderSchedule(c){
   c.innerHTML=header("Repayment Schedule","Search by loan ID, customer ID or customer name.");
   c.innerHTML+=`<div class="card section-card"><div class="toolbar"><input class="grow" id="scheduleSearch" placeholder="Search loan/customer..." oninput="searchSchedule(this.value)"></div><div id="scheduleArea" class="empty"><div class="emoji">📋</div><h3>Select a loan</h3></div></div>`;
@@ -336,7 +407,9 @@ function saveEditedPayment(id){
   const oldPrincipal=Number(p.principal||0),oldInterest=Number(p.interest||0);
   p.date=o.date;p.principal=principal;p.interest=interest;p.penalty=penalty;p.total=total;p.mode=cleanText(o.mode,50);p.notes=cleanText(o.notes,1000);p.updatedAt=new Date().toISOString();
   if(s){s.paid=Math.max(0,Number(s.paid||0)-oldPrincipal-oldInterest+principal+interest);s.status=statusForSchedule(s);}
-  save();toast("Payment updated successfully");closeModal();renderPage("history");
+  save();
+  if(typeof paymentHistoryCache!=='undefined') paymentHistoryCache.clear();
+  toast("Payment updated successfully");closeModal();renderPage("history");
 }
 
 function paymentHistoryRemainingMap(){
@@ -361,22 +434,17 @@ function paymentHistoryRemainingMap(){
 function renderPaymentsTable(rows){
   if(!rows.length)return `<div class="empty"><div class="emoji">💳</div><h3>No payments found</h3><p>Payments you record will appear here.</p></div>`;
   const desktopRows=rows.map(p=>{
-    const l=db.loans.find(x=>String(x.id)===String(p.loanId));
-    const c=l&&db.customers.find(x=>String(x.id)===String(l.customerId));
+    const l=p.loan||db.loans.find(x=>String(x.id)===String(p.loanId));
+    const c=p.customer||(l&&db.customers.find(x=>String(x.id)===String(l.customerId)));
     const khata=l?.legacyKhataNo||l?.khataNo||l?.id||"-";
     return `<tr><td>${esc(p.id)}</td><td>${fmtDate(p.date)}</td><td>${c?`<button class="link-btn" onclick="viewCustomer('${esc(c.id)}')">${esc(customerName(c))}</button>`:"-"}</td><td><button class="link-btn" onclick="showSchedule('${esc(l?.id||"")}')">${esc(khata)}</button></td><td>${money(p.principal)}</td><td>${money(p.interest)}</td><td>${money(p.penalty)}</td><td><b>${money(p.total)}</b></td><td>${esc(p.mode||"-")}</td><td class="table-actions"><button class="btn small" onclick="viewPayment('${esc(p.id)}')">View</button><button class="btn small" onclick="editPayment('${esc(p.id)}')">Edit</button>${currentUser?.role==='Administrator'?`<button class="btn small danger" onclick="confirmDeleteRecord('payment','${esc(p.id)}')">Delete</button>`:`<button class="btn small danger" disabled title="Only Administrators can delete records">Delete</button>`}</td></tr>`;
   }).join("");
   const mobileRows=rows.map(p=>{
-    const l=db.loans.find(x=>String(x.id)===String(p.loanId));
-    const c=l&&db.customers.find(x=>String(x.id)===String(l.customerId));
+    const l=p.loan||db.loans.find(x=>String(x.id)===String(p.loanId));
+    const c=p.customer||(l&&db.customers.find(x=>String(x.id)===String(l.customerId)));
     const khata=l?.legacyKhataNo||l?.khataNo||l?.id||"-";
     const customer=c?`<button class="link-btn payment-mobile-name" onclick="viewCustomer('${esc(c.id)}')">${esc(customerName(c))}</button>`:"-";
-    return `<article class="payment-mobile-card">
-      <div class="payment-mobile-head"><div><b>${esc(p.id)}</b><span>${fmtDate(p.date)}</span></div><strong>${money(p.total)}</strong></div>
-      <div class="payment-mobile-customer">${customer}<button class="link-btn" onclick="showSchedule('${esc(l?.id||"")}')">${esc(khata)}</button></div>
-      <div class="payment-mobile-breakdown"><span><small>Principal</small><b>${money(p.principal)}</b></span><span><small>Interest</small><b>${money(p.interest)}</b></span><span><small>Penalty</small><b>${money(p.penalty)}</b></span><span><small>Mode</small><b>${esc(p.mode||"-")}</b></span></div>
-      <div class="payment-mobile-actions"><button class="btn small" onclick="viewPayment('${esc(p.id)}')">View</button><button class="btn small" onclick="editPayment('${esc(p.id)}')">Edit</button>${currentUser?.role==='Administrator'?`<button class="btn small danger" onclick="confirmDeleteRecord('payment','${esc(p.id)}')">Delete</button>`:`<button class="btn small danger" disabled>Delete</button>`}</div>
-    </article>`;
+    return `<article class="payment-mobile-card"><div class="payment-mobile-head"><div><b>${esc(p.id)}</b><span>${fmtDate(p.date)}</span></div><strong>${money(p.total)}</strong></div><div class="payment-mobile-customer">${customer}<button class="link-btn" onclick="showSchedule('${esc(l?.id||"")}')">${esc(khata)}</button></div><div class="payment-mobile-breakdown"><span><small>Principal</small><b>${money(p.principal)}</b></span><span><small>Interest</small><b>${money(p.interest)}</b></span><span><small>Penalty</small><b>${money(p.penalty)}</b></span><span><small>Mode</small><b>${esc(p.mode||"-")}</b></span></div><div class="payment-mobile-actions"><button class="btn small" onclick="viewPayment('${esc(p.id)}')">View</button><button class="btn small" onclick="editPayment('${esc(p.id)}')">Edit</button>${currentUser?.role==='Administrator'?`<button class="btn small danger" onclick="confirmDeleteRecord('payment','${esc(p.id)}')">Delete</button>`:`<button class="btn small danger" disabled>Delete</button>`}</div></article>`;
   }).join("");
   return `<div class="payment-history-desktop table-wrap"><table class="data-table"><thead><tr><th>Payment ID</th><th>Date</th><th>Customer</th><th>Loan / Khata</th><th>Principal</th><th>Interest</th><th>Penalty</th><th>Total</th><th>Mode</th><th>Action</th></tr></thead><tbody>${desktopRows}</tbody></table></div><div class="payment-history-mobile">${mobileRows}</div>`;
 }
