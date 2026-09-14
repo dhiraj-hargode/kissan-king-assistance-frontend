@@ -12,14 +12,26 @@ function openPage(page){
   document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   renderPage(page)
 }
-function renderPage(page){
+async function renderPage(page){
+  const c=document.getElementById("content");
+  if(page==='dashboard'){
+    try{
+      await loadDashboardData('6m');
+      await renderDashboard(c);
+    }catch(e){
+      console.error(e);
+      c.innerHTML=header("Dashboard","Could not load dashboard data.",`<button class="btn" onclick="renderPage('dashboard')">↻ Retry</button>`)+`<div class="empty"><div class="emoji">⚠</div><h3>Dashboard unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;
+    }
+    return;
+  }
+  await ensureServerDataLoaded();
   normalizeMonthlyDueDates();
   const generated=ensureLegacyOperationalSchedules(todayISO());
   const scheduleChanged=refreshScheduleStatuses();
   const notificationsChanged=refreshNotifications();
   if(generated || scheduleChanged || notificationsChanged) save();
-  const c=document.getElementById("content");
-  ({dashboard:renderDashboard,customers:renderCustomers,registration:renderRegistration,loans:renderLoans,today:renderToday,pending:renderPending,payment:renderPayment,history:renderPaymentHistory,schedule:renderSchedule,reports:renderReports,analytics:renderAnalytics,blacklist:renderBlacklist,expired:renderExpired,expiredPeople:renderExpiredPeople,backup:renderBackup,settings:renderSettings}[page]||renderDashboard)(c)
+  const renderer=({customers:renderCustomers,registration:renderRegistration,loans:renderLoans,today:renderToday,pending:renderPending,payment:renderPayment,history:renderPaymentHistory,schedule:renderSchedule,reports:renderReports,analytics:renderAnalytics,blacklist:renderBlacklist,expired:renderExpired,expiredPeople:renderExpiredPeople,backup:renderBackup,settings:renderSettings}[page]||renderDashboard);
+  renderer(c);
 }
 
 function header(title,sub="",actions=""){return `<div class="page-title"><div><h1>${title}</h1>${sub?`<p>${sub}</p>`:""}</div><div class="actions">${actions}</div></div>`}

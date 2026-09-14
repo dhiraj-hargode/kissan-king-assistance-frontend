@@ -232,111 +232,67 @@ function dashboardRecentActivity(){
     return bt-at || String(b.date).localeCompare(String(a.date));
   }).slice(0,8);
 }
-function renderCollectionTrend(range='6m'){
-  const now=new Date();
-  let periods=[];
-  if(range==='7d'){
-    for(let i=6;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;periods.push({key,label:d.toLocaleString('en-IN',{day:'2-digit',month:'short'})});}
-  }else if(range==='30d'){
-    for(let i=5;i>=0;i--){const end=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i*5);periods.push({key:end.toISOString().slice(0,10),label:end.toLocaleString('en-IN',{day:'2-digit',month:'short'})});}
-  }else if(range==='1y'){
-    for(let i=11;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth()-i,1);periods.push({key:monthKeyLocal(d),label:d.toLocaleString('en-IN',{month:'short'})});}
-  }else{
-    for(let i=5;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth()-i,1);periods.push({key:monthKeyLocal(d),label:d.toLocaleString('en-IN',{month:'short'})});}
-  }
-  const vals=periods.map(x=>{
-    if(range==='7d')return reportPayments().filter(p=>p.date===x.key).reduce((a,p)=>a+Number(p.total||0),0);
-    if(range==='30d'){
-      const start=new Date(x.key+'T00:00:00'), end=new Date(start); end.setDate(end.getDate()+4);
-      return reportPayments().filter(p=>{const d=new Date(p.date+'T00:00:00');return d>=start&&d<=end}).reduce((a,p)=>a+Number(p.total||0),0);
-    }
-    return paymentTotalsForMonth(x.key).total;
-  });
-  const max=Math.max(...vals,1);
+async function renderCollectionTrend(range='6m'){
+  const data = await loadDashboardData(range);
+  const periods = data?.trend || [];
+  const vals = periods.map(x => Number(x.total || 0));
+  const max = Math.max(...vals, 1);
   return `<div class="trend-range"><button class="btn small ${range==='7d'?'primary':''}" onclick="renderDashboardTrend('7d')">7D</button><button class="btn small ${range==='30d'?'primary':''}" onclick="renderDashboardTrend('30d')">30D</button><button class="btn small ${range==='6m'?'primary':''}" onclick="renderDashboardTrend('6m')">6M</button><button class="btn small ${range==='1y'?'primary':''}" onclick="renderDashboardTrend('1y')">1Y</button></div><div class="chart trend-chart">${periods.map((m,i)=>`<div class="bar-col"><b>${money(vals[i])}</b><div class="bar" style="height:${Math.max(5,vals[i]/max*150)}px"></div><small>${m.label}</small></div>`).join('')}</div>`;
 }
-function renderDashboardTrend(range='6m'){const el=document.getElementById('dashboardTrend');if(el)el.innerHTML=renderCollectionTrend(range);}
+async function renderDashboardTrend(range='6m'){
+  const el=document.getElementById('dashboardTrend');
+  if(!el)return;
+  el.innerHTML='<div class="empty compact"><div class="emoji">⏳</div><p>Loading trend…</p></div>';
+  try{el.innerHTML=await renderCollectionTrend(range);}catch(e){console.error(e);el.innerHTML=`<div class="empty compact"><div class="emoji">⚠</div><p>${esc(e.message||'Could not load trend')}</p></div>`;}
+}
 
-function renderDashboard(c){
-  const stats=dashboardLoanStats();
-  const col=dashboardCollectionStats();
-  const lent=stats.loans.reduce((a,l)=>a+Number(l.amount||0),0);
-  const remaining=stats.loans.reduce((a,l)=>a+loanOutstanding(l),0);
-  const interest=reportPayments().reduce((a,p)=>a+Number(p.interest||0),0);
-  const reminders=col.dueTodayRows.filter(r=>!r.fullyPaid&&r.due>0.005).slice(0,6);
-  const topOverdue=dashboardTopOverdue();
-  const risk=dashboardRiskBuckets(col.overdue);
-  const riskTotal=Object.values(risk).reduce((a,b)=>a+b,0);
-  const activity=dashboardRecentActivity();
-  const activeCustomerCount=activeCustomers().length;
+async function renderDashboard(c){
+  const d = dashboardData || await loadDashboardData('6m');
+  const counts = d.counts || {};
+  const portfolio = d.portfolio || {};
+  const col = d.collection || {};
+  const reminders = (d.dueTodayRows || []).filter(r => !r.fullyPaid && Number(r.due||0)>0.005).slice(0,6);
+  const topOverdue = d.topOverdue || [];
+  const risk = d.risk || {'1–7 Days':0,'8–30 Days':0,'31–60 Days':0,'60+ Days':0};
+  const riskTotal = Object.values(risk).reduce((a,b)=>a+Number(b||0),0);
+  const activity = d.activity || [];
+  const special = d.specialCases || {loans:0,outstanding:0,overdue:0};
   const eventIcon={payment:'💳',loan:'📝',customer:'👤',risk:'⚠'};
   const stat=(label,value,sub,cls,icon)=>`<div class="dash-stat ${cls}"><div class="dash-stat-icon">${icon}</div><div class="dash-stat-body"><div class="dash-stat-label">${label}</div><div class="dash-stat-value">${value}</div><div class="dash-stat-sub">${sub}</div></div></div>`;
-  const collectionBreakdown=`
-    <div class="breakdown-list">
-      <div><span>Principal received</span><b>${money(col.principalToday)}</b></div>
-      <div><span>Interest received</span><b>${money(col.interestToday)}</b></div>
-      <div><span>Penalty received</span><b>${money(col.penaltyToday)}</b></div>
-      <div><span>Overdue / catch-up received</span><b>${money(col.overdueCollectedToday)}</b></div>
-      <div class="breakdown-total"><span>Total received today</span><b>${money(col.collected)}</b></div>
-    </div>`;
-
-  c.innerHTML=header("Dashboard",`${activeCustomerCount} customers · ${stats.active} active loans · ${stats.completed} completed`,`<button class="btn" onclick="renderPage('dashboard')">↻ Refresh</button>`)+`
+  const collectionBreakdown=`<div class="breakdown-list"><div><span>Principal received</span><b>${money(col.principalToday)}</b></div><div><span>Interest received</span><b>${money(col.interestToday)}</b></div><div><span>Penalty received</span><b>${money(col.penaltyToday)}</b></div><div><span>Overdue / catch-up received</span><b>${money(col.overdueCollectedToday)}</b></div><div class="breakdown-total"><span>Total received today</span><b>${money(col.collected)}</b></div></div>`;
+  c.innerHTML=header("Dashboard",`${counts.customers||0} customers · ${counts.activeLoans||0} active loans · ${counts.completedLoans||0} completed`,`<button class="btn" onclick="renderPage('dashboard')">↻ Refresh</button>`)+`
     <div class="dashboard-stat-grid">
-      ${stat("Outstanding Principal",money(remaining),"Active loan portfolio","teal","₹")}
+      ${stat("Outstanding Principal",money(portfolio.outstanding),"Active loan portfolio","teal","₹")}
       ${stat("Collected Today",money(col.collected),"All payments received today","teal","◉")}
       ${stat("Due Today",money(col.expected),"Scheduled unpaid/paid installments","blue","▣")}
       ${stat("Total Overdue",money(col.overdueAmount),`${riskTotal} overdue installments` ,"amber","⚠")}
     </div>
-
     <div class="dashboard-main-grid banking-dashboard-grid">
-      <div class="card dashboard-panel">
-        <div class="dashboard-panel-head"><div><h3>💰 Today's Collection</h3><p>Actual cash received today, including overdue catch-up payments.</p></div><button class="btn" onclick="openPage('history')">Payment History</button></div>
-        <div class="today-collection-total"><b>${money(col.collected)}</b><span>received today</span></div>
-        ${collectionBreakdown}
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>💰 Today's Collection</h3><p>Actual cash received today, including overdue catch-up payments.</p></div><button class="btn" onclick="openPage('history')">Payment History</button></div><div class="today-collection-total"><b>${money(col.collected)}</b><span>received today</span></div>${collectionBreakdown}</div>
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🏦 Loan Portfolio</h3><p>Current active lending position.</p></div><button class="btn" onclick="openPage('loans')">View Loans</button></div><div class="portfolio-summary portfolio-summary-final"><div class="portfolio-metric lent"><span class="portfolio-metric-icon">₹</span><div><span>Total lent</span><b>${money(portfolio.lent)}</b><em>${amountInWords(portfolio.lent)}</em></div></div><div class="portfolio-metric outstanding"><span class="portfolio-metric-icon">⌛</span><div><span>Outstanding principal</span><b>${money(portfolio.outstanding)}</b><em>${amountInWords(portfolio.outstanding)}</em></div></div><div class="portfolio-metric interest"><span class="portfolio-metric-icon">◎</span><div><span>All-time interest</span><b>${money(portfolio.interest)}</b><em>${amountInWords(portfolio.interest)}</em></div></div><div class="portfolio-metric completed-total"><span class="portfolio-metric-icon">✓</span><div><span>Completed / total loans</span><b>${counts.completedLoans||0} / ${counts.loans||0}</b><em>${loanCountWords(counts.completedLoans||0)} completed out of ${loanCountWords(counts.loans||0)} loans</em></div></div></div></div>
+    </div>
+    <div class="dashboard-bottom-grid">
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🚨 Top Overdue Customers</h3><p>Highest unpaid overdue amounts.</p></div><button class="btn" onclick="openPage('pending')">View All</button></div>
+        ${topOverdue.length?`<div class="top-overdue-list">${topOverdue.map(x=>`<div class="top-overdue-row"><div><b>${esc(customerName(x.customer||{}))}</b><div class="muted">${x.count} overdue installment${x.count===1?'':'s'} · ${x.days} days late</div></div><div class="top-overdue-right"><strong>${money(x.amount)}</strong><button class="btn small primary" onclick="openPendingForCustomer('${esc(customerName(x.customer||{}))}')">History</button></div></div>`).join('')}</div>`:`<div class="empty compact"><div class="emoji">✓</div><h3>No overdue customers</h3><p>Everyone is up to date.</p></div>`}
       </div>
-      <div class="card dashboard-panel">
-        <div class="dashboard-panel-head"><div><h3>🏦 Loan Portfolio</h3><p>Current active lending position.</p></div><button class="btn" onclick="openPage('loans')">View Loans</button></div>
-        <div class="portfolio-summary portfolio-summary-final">
-          <div class="portfolio-metric lent"><span class="portfolio-metric-icon">₹</span><div><span>Total lent</span><b>${money(lent)}</b><em>${amountInWords(lent)}</em></div></div>
-          <div class="portfolio-metric outstanding"><span class="portfolio-metric-icon">⌛</span><div><span>Outstanding principal</span><b>${money(remaining)}</b><em>${amountInWords(remaining)}</em></div></div>
-          <div class="portfolio-metric interest"><span class="portfolio-metric-icon">◎</span><div><span>All-time interest</span><b>${money(interest)}</b><em>${amountInWords(interest)}</em></div></div>
-          <div class="portfolio-metric completed-total"><span class="portfolio-metric-icon">✓</span><div><span>Completed / total loans</span><b>${stats.completed} / ${stats.loans.length}</b><em>${loanCountWords(stats.completed)} completed out of ${loanCountWords(stats.loans.length)} loans</em></div></div>
-        </div>
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🔔 EMIs Due Today</h3><p>Only unpaid installments scheduled for today's date.</p></div><button class="btn" onclick="openPage('today')">View All</button></div>
+        ${reminders.length?`<div class="dashboard-reminders">${reminders.map(r=>{const l=r.loan,cu=r.customer||{};const s=r.schedules?.[0];return `<div class="dashboard-reminder"><div><b>${esc(customerName(cu))}</b><div class="muted">${esc(l?.id||'')} · Due ${fmtDate(s?.dueDate||todayISO())}</div></div><div class="reminder-amount"><b>${money(r.due)}</b><button class="btn small primary" onclick="openPaymentFor('${l.id}','${s?.id||''}')">PAY</button></div></div>`}).join('')}</div>`:`<div class="empty compact"><div class="emoji">🎉</div><h3>Everyone due today is paid</h3><p>No unpaid EMI requires action.</p></div>`}
       </div>
     </div>
-
     <div class="dashboard-bottom-grid">
-      <div class="card dashboard-panel">
-        <div class="dashboard-panel-head"><div><h3>🚨 Top Overdue Customers</h3><p>Highest unpaid overdue amounts.</p></div><button class="btn" onclick="openPage('pending')">View All</button></div>
-        ${topOverdue.length?`<div class="top-overdue-list">${topOverdue.map(x=>`<div class="top-overdue-row"><div><b>${esc(customerName(x.customer))}</b><div class="muted">${x.count} overdue installment${x.count===1?'':'s'} · ${x.days} days late</div></div><div class="top-overdue-right"><strong>${money(x.amount)}</strong><button class="btn small primary" onclick="openPendingForCustomer('${esc(customerName(x.customer||{}))}')">History</button></div></div>`).join('')}</div>`:`<div class="empty compact"><div class="emoji">✓</div><h3>No overdue customers</h3><p>Everyone is up to date.</p></div>`}
-      </div>
-      <div class="card dashboard-panel">
-        <div class="dashboard-panel-head"><div><h3>🔔 EMIs Due Today</h3><p>Only unpaid installments scheduled for today's date.</p></div><button class="btn" onclick="openPage('today')">View All</button></div>
-        ${reminders.length?`<div class="dashboard-reminders">${reminders.map(r=>{const l=r.loan,cu=l&&db.customers.find(x=>String(x.id)===String(l.customerId));return `<div class="dashboard-reminder"><div><b>${esc(customerName(cu||{}))}</b><div class="muted">${esc(l?.id||'')} · Due ${fmtDate(r.schedules[0]?.dueDate||todayISO())}</div></div><div class="reminder-amount"><b>${money(r.due)}</b><button class="btn small primary" onclick="openPaymentFor('${l.id}','${r.schedules[0]?.id||''}')">PAY</button></div></div>`}).join('')}</div>`:`<div class="empty compact"><div class="emoji">🎉</div><h3>Everyone due today is paid</h3><p>No unpaid EMI requires action.</p></div>`}
-      </div>
-    </div>
-
-    <div class="dashboard-bottom-grid">
-      <div class="card dashboard-panel">
-        <div class="dashboard-panel-head"><div><h3>🕘 Today's Activity</h3><p>Latest payments, loans and account actions.</p></div><button class="btn" onclick="openPage('history')">History</button></div>
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🕘 Today's Activity</h3><p>Latest payments, loans and account actions.</p></div><button class="btn" onclick="openPage('history')">History</button></div>
         ${activity.length?`<div class="activity-list">${activity.map(e=>`<div class="activity-row"><div class="activity-icon">${eventIcon[e.type]||'•'}</div><div class="activity-copy"><b>${esc(e.title)}</b><span>${esc(e.detail)}</span></div><div class="activity-meta"><b>${e.amount!==null?money(e.amount):''}</b><span>${fmtDate(e.date)}</span></div></div>`).join('')}</div>`:`<div class="empty compact"><div class="emoji">▱</div><h3>No activity yet</h3><p>Recent activity will appear here.</p></div>`}
       </div>
-      <div class="card dashboard-panel special-case-panel">
-        <div class="dashboard-panel-head"><div><h3>⚰ Special Cases</h3><p>Deceased/expired portfolio remains visible for recovery review.</p></div><button class="btn" onclick="openPage('expiredPeople')">View</button></div>
-        <div class="special-case-stats"><div><b>${col.deceasedLoans.length}</b><span>Loans</span></div><div><b>${money(col.deceasedOutstanding)}</b><span>Outstanding</span></div><div><b>${money(col.deceasedOverdueAmount)}</b><span>Overdue</span></div></div>
-        <p class="special-case-note">This balance is excluded from operational overdue queues but is not hidden from management totals.</p>
-      </div>
+      <div class="card dashboard-panel special-case-panel"><div class="dashboard-panel-head"><div><h3>⚰ Special Cases</h3><p>Deceased/expired portfolio remains visible for recovery review.</p></div><button class="btn" onclick="openPage('expiredPeople')">View</button></div><div class="special-case-stats"><div><b>${special.loans}</b><span>Loans</span></div><div><b>${money(special.outstanding)}</b><span>Outstanding</span></div><div><b>${money(special.overdue)}</b><span>Overdue</span></div></div><p class="special-case-note">This balance is excluded from operational overdue queues but is not hidden from management totals.</p></div>
     </div>
-
     <div class="dashboard-bottom-grid banking-dashboard-grid dashboard-final-risk-row">
-      <div class="card dashboard-panel">
-        <div class="dashboard-panel-head"><div><h3>📈 Collection Trend</h3><p>Actual money received by month.</p></div><button class="btn" onclick="openPage('analytics')">Analytics</button></div>
-        <div id="dashboardTrend">${renderCollectionTrend('6m')}</div>
-      </div>
-      <div class="card dashboard-panel">
-        <div class="dashboard-panel-head"><div><h3>🚨 Overdue Risk</h3><p>Operational overdue exposure by age.</p></div><button class="btn" onclick="openPage('pending')">View Pending</button></div>
-        <div class="risk-total"><b>${riskTotal}</b><span>overdue installments</span><strong>${money(col.overdueAmount)}</strong></div>
-        <div class="risk-list">${Object.entries(risk).map(([label,count])=>`<div><span>${label}</span><b>${count}</b></div>`).join('')}</div>
-      </div>
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>📈 Collection Trend</h3><p>Actual money received by month.</p></div><button class="btn" onclick="openPage('analytics')">Analytics</button></div><div id="dashboardTrend">${renderCollectionTrendHtml(d.trend||[],'6m')}</div></div>
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🚨 Overdue Risk</h3><p>Operational overdue exposure by age.</p></div><button class="btn" onclick="openPage('pending')">View Pending</button></div><div class="risk-total"><b>${riskTotal}</b><span>overdue installments</span><strong>${money(col.overdueAmount)}</strong></div><div class="risk-list">${Object.entries(risk).map(([label,count])=>`<div><span>${label}</span><b>${count}</b></div>`).join('')}</div></div>
     </div>`;
+}
+
+function renderCollectionTrendHtml(periods, range='6m'){
+  const vals=periods.map(x=>Number(x.total||0));
+  const max=Math.max(...vals,1);
+  return `<div class="trend-range"><button class="btn small ${range==='7d'?'primary':''}" onclick="renderDashboardTrend('7d')">7D</button><button class="btn small ${range==='30d'?'primary':''}" onclick="renderDashboardTrend('30d')">30D</button><button class="btn small ${range==='6m'?'primary':''}" onclick="renderDashboardTrend('6m')">6M</button><button class="btn small ${range==='1y'?'primary':''}" onclick="renderDashboardTrend('1y')">1Y</button></div><div class="chart trend-chart">${periods.map((m,i)=>`<div class="bar-col"><b>${money(vals[i])}</b><div class="bar" style="height:${Math.max(5,vals[i]/max*150)}px"></div><small>${m.label}</small></div>`).join('')}</div>`;
 }
