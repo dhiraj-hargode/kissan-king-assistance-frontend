@@ -46,6 +46,11 @@ async function addToPending(scheduleId){
   todayCollectionState.cache.clear();
   todayCollectionState.requestKey="";
   todayCollectionState.request=null;
+  // Pending Payments must also be refreshed immediately; it is a persistent
+  // server-side queue and may have been previously rendered with zero rows.
+  pendingCollectionState.cache.clear();
+  pendingCollectionState.requestKey="";
+  pendingCollectionState.request=null;
 
   const content=document.getElementById('content');
   if(content) await loadTodayCollection(content, window.todayCollectionDate||todayISO(), window.todayFilter||"");
@@ -82,12 +87,13 @@ function openPendingForCustomer(name){window.pendingFilter=String(name||'');wind
 let pendingCollectionState={page:1,limit:50,search:"",requestKey:"",request:null,cache:new Map()};
 let pendingCollectionSearchTimer=null;
 async function loadPendingCollection(c,page=pendingCollectionState.page,search=pendingCollectionState.search){
-  const key=`${page}|${String(search||'').trim().toLowerCase()}|${todayISO()}`;
+  const key=`${page}|${String(search||'').trim().toLowerCase()}`;
+  // Pending Payments is a persistent work queue. Never serve a cached snapshot
+  // here because an Add to Pending or completed payment can change the queue
+  // immediately. Always read the authoritative server state.
   if(pendingCollectionState.requestKey===key && pendingCollectionState.request)return pendingCollectionState.request;
-  const cached=pendingCollectionState.cache.get(key);
-  if(cached){renderPendingFromApi(c,cached);return cached;}
   pendingCollectionState.requestKey=key;
-  pendingCollectionState.request=apiJSON(`/api/collections/pending?page=${page}&limit=${pendingCollectionState.limit}&search=${encodeURIComponent(search||'')}&date=${encodeURIComponent(todayISO())}`).then(x=>{pendingCollectionState.cache.set(key,x);if(pendingCollectionState.cache.size>8)pendingCollectionState.cache.delete(pendingCollectionState.cache.keys().next().value);pendingCollectionState.page=Number(x.pagination?.page||1);renderPendingFromApi(c,x);return x;}).finally(()=>pendingCollectionState.request=null);
+  pendingCollectionState.request=apiJSON(`/api/collections/pending?page=${page}&limit=${pendingCollectionState.limit}&search=${encodeURIComponent(search||'')}`).then(x=>{pendingCollectionState.page=Number(x.pagination?.page||1);renderPendingFromApi(c,x);return x;}).finally(()=>pendingCollectionState.request=null);
   return pendingCollectionState.request;
 }
 function renderPending(c){
@@ -115,11 +121,11 @@ function changePendingPage(page){
 function shiftPendingDate(delta){ openPage("pending"); }
 async function printPending(){
   try{
-    const first=await apiJSON(`/api/collections/pending?page=1&limit=100&search=&date=${encodeURIComponent(todayISO())}`);
+    const first=await apiJSON(`/api/collections/pending?page=1&limit=100&search=`);
     let rows=Array.isArray(first.rows)?first.rows.slice():[];
     const totalPages=Number(first.pagination?.totalPages||1);
     for(let page=2;page<=totalPages;page++){
-      const x=await apiJSON(`/api/collections/pending?page=${page}&limit=100&search=&date=${encodeURIComponent(todayISO())}`);
+      const x=await apiJSON(`/api/collections/pending?page=${page}&limit=100&search=`);
       if(Array.isArray(x.rows)) rows.push(...x.rows);
     }
     const body=`<h2>Pending Payments — All</h2><table><thead><tr><th>Customer</th><th>Loan / Khata</th><th>Due Date</th><th>EMI</th><th>Pending</th><th>Days Late</th><th>Status</th></tr></thead><tbody>${rows.map(r=>{const s=r.schedule||{},l=r.loan||{},cu=r.customer||{};return `<tr><td>${esc(customerName(cu)||cu.name||'-')}</td><td>${esc(l.legacyKhataNo||l.khataNo||l.id||'')}</td><td>${fmtDate(s.dueDate)}</td><td>${money(s.emi)}</td><td>${money(r.pending||0)}</td><td>${Number(r.daysLate||0)}</td><td>${esc(r.status||'PENDING')}</td></tr>`}).join('')}</tbody></table>`;
