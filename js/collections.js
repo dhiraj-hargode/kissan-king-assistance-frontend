@@ -1,8 +1,14 @@
 // Today collection and pending payment features.
 let todayCollectionState={loading:false,search:"",requestKey:"",request:null,cache:new Map()};
 let todayCollectionSearchTimer=null;
+function normalizeTodaySearch(value){
+  if(value && typeof value === "object" && "value" in value) return String(value.value || "");
+  return String(value || "");
+}
 async function loadTodayCollection(c,date=todayISO(),search=todayCollectionState.search){
-  const key=`${date}|${String(search||'').trim().toLowerCase()}`;
+  search=normalizeTodaySearch(search);
+  todayCollectionState.search=search;
+  const key=`${date}|${search.trim().toLowerCase()}`;
   todayCollectionState.loading=true;
   if(todayCollectionState.requestKey===key && todayCollectionState.request) return todayCollectionState.request;
   const cached=todayCollectionState.cache.get(key);
@@ -15,7 +21,9 @@ async function loadTodayCollection(c,date=todayISO(),search=todayCollectionState
 }
 function renderToday(c){
   const selected=window.todayCollectionDate||todayISO();
-  const search=String(window.todayFilter||'');
+  const search=normalizeTodaySearch(window.todayFilter);
+  window.todayFilter=search;
+  todayCollectionState.search=search;
   c.innerHTML=header("Today's Collection",`Selected date: ${fmtDate(selected)}`,`<button class="btn" onclick="printTodayCollection('${selected}')">🖨 Print</button>`)+`<div class="card section-card"><div class="toolbar"><label style="font-weight:700">Collection Date</label><input id="todayDatePicker" type="date" value="${selected}" onchange="window.todayCollectionDate=this.value;openPage('today')"><button class="btn" onclick="window.todayCollectionDate=todayISO();openPage('today')">Today</button><button class="btn" onclick="shiftTodayDate(-1)">← Previous Day</button><button class="btn" onclick="shiftTodayDate(1)">Next Day →</button><input class="grow" id="todayFilter" placeholder="Search customer, mobile, Khata or loan ID..." value="${esc(search)}" oninput="refreshTodaySearch(this.value)"></div></div><div id="todayCollectionApiBody"><div class="empty">Loading collection...</div></div>`;
   loadTodayCollection(c,selected,search).catch(e=>{console.error(e);document.getElementById('todayCollectionApiBody').innerHTML=`<div class="empty"><div class="emoji">⚠</div><h3>Collection unavailable</h3><p>${esc(e.message||'Request failed')}</p></div>`;});
 }
@@ -43,8 +51,10 @@ async function addToPending(scheduleId){
   openPage("today");
 }
 function refreshTodaySearch(value){
-  window.todayFilter=String(value||'');
-  const q=window.todayFilter.trim().toLowerCase();
+  const normalized=normalizeTodaySearch(value);
+  window.todayFilter=normalized;
+  todayCollectionState.search=normalized;
+  const q=normalized.trim().toLowerCase();
   document.querySelectorAll('#todayTable tbody tr[data-search], #todayMobileList .today-mobile-card[data-search]').forEach(el=>{
     el.style.display=!q || String(el.dataset.search||'').includes(q)?'':'none';
   });
