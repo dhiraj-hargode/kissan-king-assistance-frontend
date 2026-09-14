@@ -137,7 +137,7 @@ async function customerAction(select,id){
       case "loan":newLoan(id);break;
       case "blacklist":{const black=db.blacklist.some(b=>String(b.customerId)===String(id));black?unblacklist(id):openBlacklistForm(id);break;}
       case "expired":openExpiredCustomerForm(id);break;
-      case "delete":confirmDeleteRecord("customer",id);break;
+      case "delete":await confirmDeleteRecord("customer",id);break;
     }
   }catch(e){console.error(e);toast(e.message||"Could not load customer data","err");}
 }

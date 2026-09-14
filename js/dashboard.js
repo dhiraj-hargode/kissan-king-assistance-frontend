@@ -1,45 +1,72 @@
 // Dashboard and overview features.
-function confirmDeleteRecord(type,id){
+async function confirmDeleteRecord(type,id){
   if(currentUser?.role!=='Administrator') return;
+  await ensureServerDataLoaded();
   const labels={customer:"customer",loan:"loan",payment:"payment"};
   const label=labels[type]||"record";
-  if(!confirm(`Delete this ${label}? The record will be moved to Deleted Records for audit.`)) return;
+
+  // Validate first so the user is never asked to confirm a deletion that the
+  // application will reject because financial history must be preserved.
+  if(type==="customer"){
+    const loans=db.loans.filter(l=>String(l.customerId)===String(id));
+    const loanIds=new Set(loans.map(l=>String(l.id)));
+    const payments=db.payments.filter(p=>loanIds.has(String(p.loanId)));
+    if(payments.length){
+      toast("Cannot delete a customer with payment history. Financial history must be preserved.","err"); return;
+    }
+  }else if(type==="loan"){
+    const payments=db.payments.filter(p=>String(p.loanId)===String(id));
+    if(payments.length){
+      toast("Cannot delete a loan with payment history. Preserve financial history instead.","err"); return;
+    }
+  }else if(type==="payment"){
+    if(!db.payments.some(x=>String(x.id)===String(id))){
+      toast("Payment entry not found.","err"); return;
+    }
+  }
+
+  const confirmed=window.confirm(
+    `Delete this ${label} (${id})?\n\n`+
+    `This action will remove the record from active data and move it to Deleted Records for audit/recovery.\n\n`+
+    `Click OK only if you are sure you want to continue.`
+  );
+  if(!confirmed)return;
+
   db.deletedRecords=db.deletedRecords||[];
   const deletedAt=new Date().toISOString();
   if(type==="customer"){
     const customer=db.customers.find(c=>String(c.id)===String(id));
     const loans=db.loans.filter(l=>String(l.customerId)===String(id));
-    const loanIds=new Set(loans.map(l=>l.id));
-    const payments=db.payments.filter(p=>loanIds.has(p.loanId));
-    if(payments.length){
-      toast("Cannot delete a customer with payment history. Financial history must be preserved.","err"); return;
-    }
     db.deletedRecords.push({id:uid("DEL"),type:"customer",recordId:id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{customer,loans,schedules:db.schedules.filter(s=>String(s.customerId)===String(id)),blacklist:db.blacklist.filter(b=>String(b.customerId)===String(id))}});
-
-    db.customers=db.customers.filter(c=>c.id!==id);
-    db.loans=db.loans.filter(l=>l.customerId!==id);
-    db.schedules=db.schedules.filter(s=>s.customerId!==id);
-    db.blacklist=db.blacklist.filter(b=>b.customerId!==id);
+    db.customers=db.customers.filter(c=>String(c.id)!==String(id));
+    db.loans=db.loans.filter(l=>String(l.customerId)!==String(id));
+    db.schedules=db.schedules.filter(s=>String(s.customerId)!==String(id));
+    db.blacklist=db.blacklist.filter(b=>String(b.customerId)!==String(id));
   }else if(type==="loan"){
     const loan=db.loans.find(l=>String(l.id)===String(id));
-    const payments=db.payments.filter(p=>String(p.loanId)===String(id));
-    if(payments.length){
-      toast("Cannot delete a loan with payment history. Preserve financial history instead.","err"); return;
-    }
     db.deletedRecords.push({id:uid("DEL"),type:"loan",recordId:id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{loan,schedules:db.schedules.filter(s=>String(s.loanId)===String(id))}});
-    db.loans=db.loans.filter(l=>l.id!==id);
-    db.schedules=db.schedules.filter(s=>s.loanId!==id);
+    db.loans=db.loans.filter(l=>String(l.id)!==String(id));
+    db.schedules=db.schedules.filter(s=>String(s.loanId)!==String(id));
   }else if(type==="payment"){
     const p=db.payments.find(x=>String(x.id)===String(id));
-    if(!p){ toast("Payment entry not found.","err"); return; }
     db.deletedRecords.push({id:uid("DEL"),type:"payment",recordId:p.id,deletedAt,deletedBy:"admin",reason:"Manual deletion",data:{payment:{...p}}});
-    if(p){
-      const s=db.schedules.find(x=>x.id===p.scheduleId);
-      if(s){ s.paid=Math.max(0,Number(s.paid||0)-Number(p.principal||0)-Number(p.interest||0)); s.status=statusForSchedule(s); }
+    const schedule=db.schedules.find(x=>String(x.id)===String(p.scheduleId));
+    if(schedule){
+      schedule.paid=Math.max(0,Number(schedule.paid||0)-Number(p.principal||0)-Number(p.interest||0));
+      schedule.status=statusForSchedule(schedule);
     }
-    db.payments=db.payments.filter(p=>p.id!==id);
+    db.payments=db.payments.filter(x=>String(x.id)!==String(id));
   }
-  save(); toast(`${label[0].toUpperCase()+label.slice(1)} deleted`); closeModal(); renderPage(currentPage);
+
+  try{
+    await save();
+    toast(`${label[0].toUpperCase()+label.slice(1)} deleted successfully`);
+    closeModal();
+    renderPage(currentPage);
+  }catch(e){
+    toast(e.message||`Could not delete ${label}. No server change was confirmed.`,"err");
+    await loadServerData().catch(()=>{});
+  }
 }
 function printSection(title, html){
   const w=window.open("","_blank","width=1100,height=800");
