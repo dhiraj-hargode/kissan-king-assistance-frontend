@@ -332,21 +332,19 @@ async function renderDashboard(c){
       <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🔔 EMIs Due Today</h3><p>Only unpaid installments scheduled for today's date.</p></div><button class="btn" onclick="openPage('today')">View All</button></div>
         ${reminders.length?`<div class="dashboard-reminders">${reminders.map(r=>{const l=r.loan,cu=r.customer||{};const s=r.schedules?.[0];return `<div class="dashboard-reminder"><div><b>${esc(customerName(cu))}</b><div class="muted">${esc(l?.id||'')} · Due ${fmtDate(s?.dueDate||todayISO())}</div></div><div class="reminder-amount"><b>${money(r.due)}</b><button class="btn small primary" onclick="openPaymentFor('${l.id}','${s?.id||''}')">PAY</button></div></div>`}).join('')}</div>`:`<div class="empty compact"><div class="emoji">🎉</div><h3>Everyone due today is paid</h3><p>No unpaid EMI requires action.</p></div>`}
       </div>
-    </div>
-    <div class="dashboard-bottom-grid">
       <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🕘 Today's Activity</h3><p>Latest payments, loans and account actions.</p></div><button class="btn" onclick="openPage('history')">History</button></div>
         ${activity.length?`<div class="activity-list">${activity.map(e=>`<div class="activity-row"><div class="activity-icon">${eventIcon[e.type]||'•'}</div><div class="activity-copy"><b>${esc(e.title)}</b><span>${esc(e.detail)}</span></div><div class="activity-meta"><b>${e.amount!==null?money(e.amount):''}</b><span>${fmtDate(e.date)}</span></div></div>`).join('')}</div>`:`<div class="empty compact"><div class="emoji">▱</div><h3>No activity yet</h3><p>Recent activity will appear here.</p></div>`}
       </div>
+    </div>
+    <div class="dashboard-bottom-grid banking-dashboard-grid">
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>📈 Collection Trend</h3><p>Actual money received by month.</p></div><button class="btn" onclick="openPage('analytics')">Analytics</button></div><div id="dashboardTrend">${renderCollectionTrendHtml(d.trend||[],'6m')}</div></div>
       <div class="card dashboard-panel special-case-panel"><div class="dashboard-panel-head"><div><h3>⚰ Special Cases</h3><p>Deceased/expired portfolio remains visible for recovery review.</p></div><button class="btn" onclick="openPage('expiredPeople')">View</button></div><div class="special-case-stats"><div><b>${special.loans}</b><span>Loans</span></div><div><b>${money(special.outstanding)}</b><span>Outstanding</span></div><div><b>${money(special.overdue)}</b><span>Overdue</span></div></div><p class="special-case-note">This balance is excluded from operational overdue queues but is not hidden from management totals.</p></div>
     </div>
     <div class="dashboard-bottom-grid banking-dashboard-grid dashboard-final-risk-row">
-      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>📈 Collection Trend</h3><p>Actual money received by month.</p></div><button class="btn" onclick="openPage('analytics')">Analytics</button></div><div id="dashboardTrend">${renderCollectionTrendHtml(d.trend||[],'6m')}</div></div>
-      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🚨 Overdue Risk</h3><p>Operational overdue exposure by age.</p></div><button class="btn" onclick="openPage('pending')">View Pending</button></div><div class="risk-total"><b>${riskTotal}</b><span>overdue installments</span><strong>${money(col.overdueAmount)}</strong></div><div class="risk-list">${Object.entries(risk).map(([label,count])=>`<div><span>${label}</span><b>${count}</b></div>`).join('')}</div></div>
-    </div>
-    <div class="dashboard-bottom-grid dashboard-top-overdue-final">
       <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🚨 Top Overdue Customers</h3><p>Highest unpaid overdue amounts.</p></div><button class="btn" onclick="openPage('pending')">View All</button></div>
         ${topOverdue.length?`<div class="top-overdue-list">${topOverdue.map(x=>`<div class="top-overdue-row"><div><b>${esc(customerName(x.customer||{}))}</b><div class="muted">${x.count} overdue installment${x.count===1?'':'s'} · ${x.days} days late</div></div><div class="top-overdue-right"><strong>${money(x.amount)}</strong><button class="btn small primary" onclick="openPendingForCustomer('${esc(customerName(x.customer||{}))}')">History</button></div></div>`).join('')}</div>`:`<div class="empty compact"><div class="emoji">✓</div><h3>No overdue customers</h3><p>Everyone is up to date.</p></div>`}
       </div>
+      <div class="card dashboard-panel"><div class="dashboard-panel-head"><div><h3>🚨 Overdue Risk</h3><p>Operational overdue exposure by age.</p></div><button class="btn" onclick="openPage('pending')">View Pending</button></div><div class="risk-total"><b>${riskTotal}</b><span>overdue installments</span><strong>${money(col.overdueAmount)}</strong></div><div class="risk-list">${Object.entries(risk).map(([label,count])=>`<div><span>${label}</span><b>${count}</b></div>`).join('')}</div></div>
     </div>`;
 }
 

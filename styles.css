@@ -670,22 +670,3 @@ button,input,select,textarea{font-family:inherit}
   .payment-loan-grid b{font-size:12px}
 }
 
-/* Dashboard: keep Top Overdue Customers at the very bottom as a clean full-width section. */
-.dashboard-top-overdue-final{grid-template-columns:1fr;}
-.dashboard-top-overdue-final .dashboard-panel{width:100%;}
-
-/* v44 — Top Overdue Customers: compact full-width panel with no artificial height */
-.dashboard-top-overdue-final{margin-top:14px!important;align-items:start!important;}
-.dashboard-top-overdue-final .dashboard-panel{padding:12px 14px!important;min-height:0!important;height:auto!important;align-self:start!important;}
-.dashboard-top-overdue-final .dashboard-panel-head{margin-bottom:8px!important;align-items:center;}
-.dashboard-top-overdue-final .dashboard-panel-head h3{font-size:14px!important;}
-.dashboard-top-overdue-final .dashboard-panel-head p{margin-top:2px!important;font-size:10px!important;}
-.dashboard-top-overdue-final .top-overdue-list{gap:5px!important;}
-.dashboard-top-overdue-final .top-overdue-row{padding:7px 9px!important;min-height:0!important;}
-.dashboard-top-overdue-final .top-overdue-row b{font-size:11px!important;}
-.dashboard-top-overdue-final .top-overdue-row .muted{font-size:9px!important;margin-top:2px!important;}
-.dashboard-top-overdue-final .top-overdue-right{gap:7px!important;}
-.dashboard-top-overdue-final .top-overdue-right strong{font-size:11px!important;}
-.dashboard-top-overdue-final .top-overdue-right .btn.small{padding:5px 8px!important;font-size:10px!important;}
-.dashboard-top-overdue-final .empty.compact{padding:18px 12px!important;}
-.dashboard-top-overdue-final .empty.compact .emoji{font-size:22px!important;}
