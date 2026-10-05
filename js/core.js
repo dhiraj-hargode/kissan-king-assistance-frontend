@@ -6,8 +6,7 @@
 // - Local development keeps using the local backend.
 // - Deployed frontend uses the live Render backend.
 
-//const API_BASE = "";
-const API_BASE = String(window.APP_CONFIG?.API_BASE_URL || "").replace(/\/+$/, "");
+const API_BASE = "";
 
 const KEY = "server-db";
 const USER_DB_KEY = "server-db";

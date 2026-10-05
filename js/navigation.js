@@ -60,7 +60,7 @@ async function renderPage(page) {
   }
 
   // Collections list pages use targeted APIs and must not load the complete
-  // JSONB database merely to display Today's Collection or Pending Payments.
+  // database merely to display Today's Collection or Pending Payments.
   // Payment-entry actions will lazy-load the full data only when required.
   if (page === 'today' || page === 'pending') {
     try {
@@ -73,7 +73,7 @@ async function renderPage(page) {
   }
 
   // Read-heavy reporting/admin lists use targeted APIs and must not hydrate
-  // the complete JSONB database just to open the page.
+  // the complete database just to open the page.
   if (['reports', 'analytics', 'blacklist', 'expired'].includes(page)) {
     try {
       const renderer = { reports: renderReports, analytics: renderAnalytics, blacklist: renderBlacklist, expired: renderExpired }[page];
@@ -90,7 +90,7 @@ async function renderPage(page) {
     return;
   }
 
-  // New Registration is a form-only page. Do not hydrate the complete JSONB
+  // New Registration is a form-only page. Do not hydrate the complete
   // database just to display the form. The submit handler loads data only
   // when it actually needs to create the customer.
   if (page === 'backup') {

@@ -23,77 +23,38 @@ function renderToday(c) {
 function renderTodayFromApi(c, x) {
   const body = document.getElementById('todayCollectionApiBody'); if (!body) return;
   const rows = Array.isArray(x.rows) ? x.rows : [], summary = x.summary || {}, selected = x.date || window.todayCollectionDate || todayISO();
-  body.innerHTML = `<div class="stat-grid" style="margin-top:16px">${stat("Expected", money(summary.expected || 0), "Unpaid EMIs due on selected date")}${stat("Collected", money(summary.collected || 0), "Payments received on selected date")}${stat("Interest", money(summary.interest || 0), "Interest received")}${stat("Pending", money(summary.pending || 0), "Unpaid amount for selected date")}</div><div class="card section-card today-collection-card" style="margin-top:18px"><div class="today-collection-head"><h3>Collection Entries — ${fmtDate(selected)}</h3><span class="today-entry-count">${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}</span></div><div class="today-collection-desktop table-wrap"><table class="data-table" id="todayTable"><thead><tr><th>Sr No</th><th>Khata No</th><th>Name</th><th>Mobile</th><th>Loan Date</th><th>Loan Rs.</th><th>Remaining</th><th>Pay Amount</th><th>Paid Today</th><th>Remark</th><th>Action</th></tr></thead><tbody>${rows.map((r, i) => { const l = r.loan || {}, cu = r.customer || {}, s = r.s || r.schedules?.[0] || {}; const khata = l.legacyKhataNo || l.khataNo || l.id || '-'; const pending = Boolean(r.pendingAddedAt || r.s?.pendingAddedAt || r.s?.manualPending || r.schedule?.pendingAddedAt || r.schedule?.manualPending); const remark = r.fullyPaidToday ? 'Paid' : pending ? 'Added to Pending' : (Number(r.paidOnDate || 0) > 0 ? 'Partial / Paid' : 'Due Today'); const remaining = Math.max(0, Number(l.amount || 0) - Number(l.paidPrincipal || 0)); return `<tr data-search="${esc((khata + ' ' + l.id + ' ' + customerName(cu) + ' ' + (cu.mobile || '')).toLowerCase())}"><td>${i + 1}</td><td><b>${esc(khata)}</b></td><td><b>${esc(customerName(cu) || cu.name || '-')}</b></td><td>${esc(cu.mobile || '-')}</td><td>${fmtDate(l.startDate)}</td><td>${money(l.amount)}</td><td><b>${money(remaining)}</b></td><td><b>${money(r.due || 0)}</b></td><td>${money(r.paidOnDate || 0)}</td><td><span class="badge ${r.fullyPaidToday ? 'green' : pending ? 'amber' : 'amber'}">${remark}</span></td><td>${(r.fullyPaidToday || Number(r.due || 0) <= 0.005) ? '<button class="btn small" disabled>Paid</button>' : pending ? '<button class="btn small" disabled>Pending</button>' : `<div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap"><button class="btn small primary" onclick="openPaymentFor('${l.id}','${s.id}','${selected}')">Payment</button><button class="btn small" onclick="addToPending('${s.id}', this)">Add to Pending</button></div>`}</td></tr>` }).join('')}</tbody></table></div><div class="today-collection-mobile" id="todayMobileList">${rows.map((r, i) => { const l = r.loan || {}, cu = r.customer || {}, s = r.s || r.schedules?.[0] || {}; const khata = l.legacyKhataNo || l.khataNo || l.id || '-'; const pending = Boolean(r.pendingAddedAt || r.s?.pendingAddedAt || r.s?.manualPending || r.schedule?.pendingAddedAt || r.schedule?.manualPending); const remark = r.fullyPaidToday ? 'Paid' : pending ? 'Added to Pending' : (Number(r.paidOnDate || 0) > 0 ? 'Partial / Paid' : 'Due Today'); const mobileSearch = esc((khata + ' ' + l.id + ' ' + customerName(cu) + ' ' + (cu.mobile || '')).toLowerCase()); return `<article class="today-mobile-card" data-search="${mobileSearch}"><div class="today-mobile-head"><div><span class="today-mobile-index">${i + 1}</span><div><b>${esc(customerName(cu) || cu.name || '-')}</b><small>${esc(khata)} · ${esc(cu.mobile || '-')}</small></div></div><span class="badge ${r.fullyPaidToday ? 'green' : pending ? 'amber' : 'amber'}">${remark}</span></div><div class="today-mobile-grid"><div><small>Loan Date</small><b>${fmtDate(l.startDate)}</b></div><div><small>Loan Amount</small><b>${money(l.amount)}</b></div><div><small>Remaining</small><b>${money(Math.max(0, Number(l.amount || 0) - Number(l.paidPrincipal || 0)))}</b></div><div><small>Pay Amount</small><b>${money(r.due || 0)}</b></div><div><small>Paid Today</small><b>${money(r.paidOnDate || 0)}</b></div></div>${(r.fullyPaidToday || Number(r.due || 0) <= 0.005) ? '<button class="btn small today-paid-btn" disabled>✓ Paid</button>' : pending ? '<button class="btn small today-paid-btn" disabled>✓ Added to Pending</button>' : `<div class="today-mobile-actions"><button class="btn primary" onclick="openPaymentFor('${l.id}','${s.id}','${selected}')">Payment</button><button class="btn" onclick="addToPending('${s.id}', this)">Add to Pending</button></div>`}</article>` }).join('')}${rows.length ? '' : `<div class='empty'><div class='emoji'>📅</div><h3>No collection entries for ${fmtDate(selected)}</h3><p>Due, partially paid, and fully paid installments for the selected date will appear here for reference.</p></div>`}</div></div>`;
+  body.innerHTML = `<div class="stat-grid" style="margin-top:16px">${stat("Expected", money(summary.expected || 0), "Unpaid EMIs due on selected date")}${stat("Collected", money(summary.collected || 0), "Payments received on selected date")}${stat("Interest", money(summary.interest || 0), "Interest received")}${stat("Pending", money(summary.pending || 0), "Unpaid amount for selected date")}</div><div class="card section-card today-collection-card" style="margin-top:18px"><div class="today-collection-head"><h3>Collection Entries — ${fmtDate(selected)}</h3><span class="today-entry-count">${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}</span></div><div class="today-collection-desktop table-wrap"><table class="data-table" id="todayTable"><thead><tr><th>Sr No</th><th>Khata No</th><th>Name</th><th>Mobile</th><th>Loan Date</th><th>Loan Rs.</th><th>Remaining</th><th>Pay Amount</th><th>Paid Today</th><th>Remark</th><th>Action</th></tr></thead><tbody>${rows.map((r, i) => { const l = r.loan || {}, cu = r.customer || {}, s = r.s || r.schedules?.[0] || {}; const khata = l.legacyKhataNo || l.khataNo || l.id || '-'; const pending = Boolean(r.pendingAddedAt || r.s?.pendingAddedAt || r.s?.manualPending || r.schedule?.pendingAddedAt || r.schedule?.manualPending); const remark = r.fullyPaidToday ? 'Paid' : pending ? 'Added to Pending' : (Number(r.paidOnDate || 0) > 0 ? 'Partial / Paid' : 'Due Today'); const remaining = Math.max(0, Number(l.amount || 0) - Number(l.paidPrincipal || 0)); return `<tr data-search="${esc((khata + ' ' + l.id + ' ' + customerName(cu) + ' ' + (cu.mobile || '')).toLowerCase())}"><td>${i + 1}</td><td><b>${esc(khata)}</b></td><td><b>${esc(customerName(cu) || cu.name || '-')}</b></td><td>${esc(cu.mobile || '-')}</td><td>${fmtDate(l.startDate)}</td><td>${money(l.amount)}</td><td><b>${money(remaining)}</b></td><td><b>${money(r.due || 0)}</b></td><td>${money(r.paidOnDate || 0)}</td><td><span class="badge ${r.fullyPaidToday ? 'green' : pending ? 'amber' : 'amber'}">${remark}</span></td><td>${(r.fullyPaidToday || Number(r.due || 0) <= 0.005) ? '<button class="btn small" disabled>Paid</button>' : pending ? '<button class="btn small" disabled>Pending</button>' : `<div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap"><button class="btn small primary" onclick="openPaymentFor('${l.id}','${s.id}','${selected}')">Payment</button><button class="btn small" onclick="addToPending('${s.id}')">Add to Pending</button></div>`}</td></tr>` }).join('')}</tbody></table></div><div class="today-collection-mobile" id="todayMobileList">${rows.map((r, i) => { const l = r.loan || {}, cu = r.customer || {}, s = r.s || r.schedules?.[0] || {}; const khata = l.legacyKhataNo || l.khataNo || l.id || '-'; const pending = Boolean(r.pendingAddedAt || r.s?.pendingAddedAt || r.s?.manualPending || r.schedule?.pendingAddedAt || r.schedule?.manualPending); const remark = r.fullyPaidToday ? 'Paid' : pending ? 'Added to Pending' : (Number(r.paidOnDate || 0) > 0 ? 'Partial / Paid' : 'Due Today'); const mobileSearch = esc((khata + ' ' + l.id + ' ' + customerName(cu) + ' ' + (cu.mobile || '')).toLowerCase()); return `<article class="today-mobile-card" data-search="${mobileSearch}"><div class="today-mobile-head"><div><span class="today-mobile-index">${i + 1}</span><div><b>${esc(customerName(cu) || cu.name || '-')}</b><small>${esc(khata)} · ${esc(cu.mobile || '-')}</small></div></div><span class="badge ${r.fullyPaidToday ? 'green' : pending ? 'amber' : 'amber'}">${remark}</span></div><div class="today-mobile-grid"><div><small>Loan Date</small><b>${fmtDate(l.startDate)}</b></div><div><small>Loan Amount</small><b>${money(l.amount)}</b></div><div><small>Remaining</small><b>${money(Math.max(0, Number(l.amount || 0) - Number(l.paidPrincipal || 0)))}</b></div><div><small>Pay Amount</small><b>${money(r.due || 0)}</b></div><div><small>Paid Today</small><b>${money(r.paidOnDate || 0)}</b></div></div>${(r.fullyPaidToday || Number(r.due || 0) <= 0.005) ? '<button class="btn small today-paid-btn" disabled>✓ Paid</button>' : pending ? '<button class="btn small today-paid-btn" disabled>✓ Added to Pending</button>' : `<div class="today-mobile-actions"><button class="btn primary" onclick="openPaymentFor('${l.id}','${s.id}','${selected}')">Payment</button><button class="btn" onclick="addToPending('${s.id}')">Add to Pending</button></div>`}</article>` }).join('')}${rows.length ? '' : `<div class='empty'><div class='emoji'>📅</div><h3>No collection entries for ${fmtDate(selected)}</h3><p>Due, partially paid, and fully paid installments for the selected date will appear here for reference.</p></div>`}</div></div>`;
 }
-const pendingActionInFlight = new Set();
-async function addToPending(scheduleId, buttonEl = null) {
-  const id = String(scheduleId || '');
-  if (!id || pendingActionInFlight.has(id)) return;
+async function addToPending(scheduleId) {
+  // Today's Collection is API-backed, so the in-memory database may not have
+  // been hydrated when this action is clicked. Always load the authoritative
+  // normalized data before resolving the schedule ID.
+  await loadServerData();
+  const s = db.schedules.find(x => String(x.id) === String(scheduleId));
+  if (!s) { toast("Installment not found.", "err"); return; }
+  if (effectiveDueAmount(s) <= 0.005) { toast("This installment is already paid.", "err"); return; }
+  if (isExplicitPending(s)) { toast("This installment is already in Pending Payments.", "err"); return; }
 
-  pendingActionInFlight.add(id);
-  const originalText = buttonEl?.textContent || 'Add to Pending';
-  if (buttonEl) {
-    buttonEl.disabled = true;
-    buttonEl.textContent = 'Adding...';
-  }
+  addPendingQueueId(s);
+  s.pendingAddedAt = new Date().toISOString();
+  s.pendingAddedBy = currentUser?.username || "admin";
+  refreshNotifications();
+  await save();
 
-  try {
-    // Use the dedicated server-side operation. The old flow downloaded the
-    // entire database before saving one schedule, which became slow with large
-    // test/production datasets.
-    const result = await apiJSON('/api/collections/pending', {
-      method: 'POST',
-      body: JSON.stringify({ scheduleId: id })
-    });
+  // The collection list is API-backed and cached. Invalidate the cache after
+  // the mutation succeeds so the next render cannot show stale rows.
+  todayCollectionState.cache.clear();
+  todayCollectionState.requestKey = "";
+  todayCollectionState.request = null;
+  // Pending Payments must also be refreshed immediately; it is a persistent
+  // server-side queue and may have been previously rendered with zero rows.
+  pendingCollectionState.cache.clear();
+  pendingCollectionState.requestKey = "";
+  pendingCollectionState.request = null;
 
-    // Keep the local notification badge useful without reloading the full DB.
-    if (result.ok) {
-      if (result.alreadyPending) {
-        toast('This installment is already in Pending Payments.', 'err');
-      } else {
-        const current = todayCollectionState.cache.get(
-          `${window.todayCollectionDate || todayISO()}|${String(window.todayFilter || '').trim().toLowerCase()}`
-        );
-        if (current?.rows) {
-          for (const row of current.rows) {
-            const s = row.s || row.schedules?.[0];
-            if (String(s?.id) === id) {
-              s.manualPending = true;
-              s.pendingAddedAt = result.pendingAddedAt;
-              s.pendingAddedBy = result.pendingAddedBy;
-            }
-          }
-        }
-        toast('Installment moved to Pending Payments');
-      }
-    }
-
-    // The collection and pending pages are API-backed. Invalidate only their
-    // small page caches; do not reload the entire database.
-    todayCollectionState.cache.clear();
-    todayCollectionState.requestKey = '';
-    todayCollectionState.request = null;
-    pendingCollectionState.cache.clear();
-    pendingCollectionState.requestKey = '';
-    pendingCollectionState.request = null;
-
-    const content = document.getElementById('content');
-    if (content) {
-      await loadTodayCollection(
-        content,
-        window.todayCollectionDate || todayISO(),
-        window.todayFilter || ''
-      );
-    }
-  } catch (e) {
-    toast(e.message || 'Could not add installment to Pending Payments', 'err');
-  } finally {
-    pendingActionInFlight.delete(id);
-    if (buttonEl) {
-      buttonEl.disabled = false;
-      buttonEl.textContent = originalText;
-    }
-  }
+  const content = document.getElementById('content');
+  if (content) await loadTodayCollection(content, window.todayCollectionDate || todayISO(), window.todayFilter || "");
+  toast("Installment moved to Pending Payments");
 }
 function refreshTodaySearch(value) {
   window.todayFilter = normalizeTodaySearch(value);
